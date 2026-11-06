@@ -3,6 +3,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { type Address, getAddress } from "viem";
 import { env } from "../env";
 import { AppError } from "../errors";
+import { KEY_PREFIX, sessionFromKey } from "./apiKeys";
 
 export const SESSION_COOKIE = "familiar_session";
 const SESSION_TTL_S = 7 * 24 * 3600;
@@ -14,6 +15,8 @@ export interface Session {
   privyUserId?: string;
   /** User-scoped 0G credential for iAI sessions (encrypted inside the JWT, never sent to the browser in clear). */
   zgUserToken?: string;
+  /** Set when the request authenticated with a personal `fam_` key (connectors) instead of the cookie. */
+  apiKeyId?: string;
 }
 
 const key = () => new TextEncoder().encode(env().SESSION_SECRET);
@@ -43,9 +46,14 @@ function readToken(req: Request): string | undefined {
   return m?.[1];
 }
 
+/**
+ * The caller's session: a signed session JWT (cookie or `Authorization: Bearer <jwt>`) or a
+ * personal key (`Authorization: Bearer fam_…`). Unknown, revoked or invalid credentials → null.
+ */
 export async function getSession(req: Request): Promise<Session | null> {
   const token = readToken(req);
   if (!token) return null;
+  if (token.startsWith(KEY_PREFIX)) return sessionFromKey(token);
   try {
     const { payload } = await jwtVerify(token, key(), { issuer: "familiar", algorithms: ["HS256"] });
     return {

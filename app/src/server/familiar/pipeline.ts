@@ -21,14 +21,14 @@ function clampWords(s: string, n: number) {
 
 export type VisitKind = "hatch" | "visit" | "wake";
 
-export function systemPrompt(a: { name: string; memory: string; transcript: string; kind: VisitKind; day: number }) {
+export function systemPrompt(a: { name: string; memory: string; transcript: string; kind: VisitKind; day: number; body?: string }) {
   const situation =
     a.kind === "hatch"
       ? "You have just hatched. This is the first time you meet your human. They told you three things they care about."
       : a.kind === "wake"
         ? "You have been asleep for a long time because your human stopped visiting. They just woke you up."
         : `This is visit number ${a.day}.`;
-  return `You are the inner voice of a small magical creature called ${a.name}, a Familiar bonded to one human.
+  return `You are the inner voice of a small magical creature called ${a.name}, a Familiar bonded to one human.${a.body ? `\nYou are ${a.body}. Stay true to your body: never mention features you don't have.` : ""}
 ${situation}
 You remember: ${a.memory || "(nothing yet)"}
 Today they said: ${a.transcript}
@@ -50,11 +50,19 @@ export interface PipelineInput {
   day: number;
   stage: Stage;
   styleSeed: string;
+  /** e.g. "a small ink black cat hatchling": keeps the voice consistent with the portrait. */
+  body?: string;
+  /** Accessory phrases for what it's wearing tonight. */
+  wearing?: string[];
   memory: string;
   /** Voice note; omitted for a wake-up without speech. */
   audio?: { blob: Blob; filename: string };
-  /** Previous portrait URL, passed to Seedream as a reference for visual consistency. */
+  /** Typed words instead of a voice note: used as the transcript, Whisper is skipped. */
+  text?: string;
+  /** Previous portrait (data: URL or public URL), passed to Seedream as a visual reference. */
   previousPortrait?: string | null;
+  /** Also speak the reply (text-to-speech). Failure never fails the visit. */
+  speak?: boolean;
   onReceipt?: (r: Receipt) => Promise<void> | void;
 }
 
@@ -64,10 +72,15 @@ export interface PipelineOutput {
   thought: Thought;
   image: Uint8Array;
   imagePrompt: string;
+  /** MP3 of the spoken reply, when requested and successful. */
+  speech: Uint8Array | null;
   receipts: Receipt[];
 }
 
-/** Whisper → 0GM-1.0 → Seedream, all on 0G Private Computer. The transcript never leaves this function. */
+/**
+ * Whisper → 0GM-1.0 → Seedream, all on 0G Private Computer (Whisper is skipped for typed text).
+ * The transcript never leaves this function.
+ */
 export async function runPipeline(p: PipelineInput): Promise<PipelineOutput> {
   const receipts: Receipt[] = [];
   const keep = async (r: Receipt) => {
@@ -76,7 +89,9 @@ export async function runPipeline(p: PipelineInput): Promise<PipelineOutput> {
   };
 
   let transcript: string;
-  if (p.audio) {
+  if (p.text?.trim()) {
+    transcript = p.text.trim();
+  } else if (p.audio) {
     const t = await p.router.transcribe(p.audio.blob, p.audio.filename);
     await keep(t.receipt);
     transcript = t.text;
@@ -87,24 +102,38 @@ export async function runPipeline(p: PipelineInput): Promise<PipelineOutput> {
 
   const thought = await think(p, transcript, keep);
 
-  const imagePrompt = imagePromptFor(p.styleSeed, p.stage, thought.image_prompt);
-  let drawn: { bytes: Uint8Array; receipt: Receipt };
+  const imagePrompt = imagePromptFor(p.styleSeed, p.stage, thought.image_prompt, p.wearing);
+  // Portrait and spoken reply are independent: run them together.
+  const [drawn, spoken] = await Promise.all([draw(p, imagePrompt), p.speak ? speak(p, thought.reply) : Promise.resolve(null)]);
+  await keep(drawn.receipt);
+  if (spoken) await keep(spoken.receipt);
+
+  return { transcriptChars: transcript.length, transcriptHash, thought, image: drawn.bytes, imagePrompt, speech: spoken?.bytes ?? null, receipts };
+}
+
+async function draw(p: PipelineInput, prompt: string) {
   try {
-    drawn = await p.router.image(imagePrompt, p.previousPortrait ?? undefined);
+    return await p.router.image(prompt, p.previousPortrait ?? undefined);
   } catch (e) {
-    // A reference the provider can't fetch shouldn't cost the visit; retry text-only.
+    // A reference the provider can't use shouldn't cost the visit; retry text-only.
     if (!p.previousPortrait || !(e instanceof AppError) || e.code !== "BAD_REQUEST") throw e;
     log.warn("seedream_reference_rejected", { message: e.message });
-    drawn = await p.router.image(imagePrompt);
+    return p.router.image(prompt);
   }
-  await keep(drawn.receipt);
+}
 
-  return { transcriptChars: transcript.length, transcriptHash, thought, image: drawn.bytes, imagePrompt, receipts };
+async function speak(p: PipelineInput, reply: string) {
+  try {
+    return await p.router.speech(reply);
+  } catch (e) {
+    log.warn("tts_failed", { message: e instanceof Error ? e.message : String(e) });
+    return null;
+  }
 }
 
 async function think(p: PipelineInput, transcript: string, keep: (r: Receipt) => Promise<void>): Promise<Thought> {
   const messages = [
-    { role: "system" as const, content: systemPrompt({ name: p.name, memory: p.memory, transcript, kind: p.kind, day: p.day }) },
+    { role: "system" as const, content: systemPrompt({ name: p.name, memory: p.memory, transcript, kind: p.kind, day: p.day, body: p.body }) },
     { role: "user" as const, content: "Respond with the JSON object now." },
   ];
   for (let attempt = 1; attempt <= 2; attempt++) {

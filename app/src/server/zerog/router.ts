@@ -5,26 +5,30 @@ import { log } from "../log";
 
 /**
  * 0G Private Computer (Router) client — OpenAI-compatible, https://router-api.0g.ai/v1.
- * Every call yields a Receipt with the router's request id (X-Request-ID / x_0g_trace.request_id),
- * the serving provider, billed cost (neuron) and whether the router verified the TEE signature.
+ * Every call yields a Receipt with the router's request id (x_0g_trace.request_id, else the UUID
+ * X-Request-ID header), the serving provider, the billed cost and — for TEE providers — whether the
+ * router verified the provider's TEE signature.
  */
-export type Step = "transcribe" | "think" | "draw" | "evolve";
+export type Step = "transcribe" | "think" | "draw" | "speak" | "evolve";
 
 export interface Receipt {
   step: Step;
   model: string;
   requestId: string;
   latencyMs: number;
-  /** Total cost in neuron (1e18 = 1 0G), or micro-USD for USD-settled accounts. */
+  /** Billed cost in `costCurrency` units: micro-USD ("usd") or neuron ("0g", 1e18 = 1 0G). */
   cost: string | null;
+  costCurrency: string | null;
   provider: string | null;
+  /** true/false when the router checked a TEE signature; null when the provider is not a TEE. */
   teeVerified: boolean | null;
 }
 
 interface Trace {
   request_id?: string;
   provider?: string;
-  billing?: { total_cost?: string };
+  provider_identity?: string;
+  billing?: { total_cost?: string; currency?: string };
   tee_verified?: boolean;
 }
 
@@ -36,6 +40,12 @@ export interface RouterOptions {
   /** Correlates calls with our visit id via X-Client-Request-Id. */
   clientRequestId?: string;
 }
+
+export type VideoPoll =
+  | { status: "pending" }
+  | { status: "failed"; error: string }
+  /** `billedRequestId`/`cost`: async jobs are billed under their own id once complete. */
+  | { status: "done"; bytes: Uint8Array; billedRequestId: string | null; cost: string | null; costCurrency: string | null };
 
 export class ZeroGRouter {
   private readonly baseUrl: string;
@@ -60,7 +70,7 @@ export class ZeroGRouter {
     form.set("file", audio, filename);
     form.set("response_format", "json");
     const q = env().ZG_VERIFY_TEE ? "?verify_tee=true" : "";
-    const { body, receipt } = await this.call<{ text?: string }>("transcribe", model, `/audio/transcriptions${q}`, { body: form });
+    const { body, receipt } = await this.callJson<{ text?: string }>("transcribe", model, `/audio/transcriptions${q}`, { body: form });
     const text = (body.text ?? "").trim();
     if (!text) throw new AppError("BAD_REQUEST", "We couldn't hear anything in that voice note — try again a little closer to the mic");
     return { text, receipt };
@@ -68,7 +78,7 @@ export class ZeroGRouter {
 
   async chatJson(messages: { role: "system" | "user"; content: string }[]): Promise<{ content: string; receipt: Receipt }> {
     const model = env().ZG_MODEL_CHAT;
-    const { body, receipt } = await this.call<{ choices?: { message?: { content?: string } }[] }>("think", model, "/chat/completions", {
+    const { body, receipt } = await this.callJson<{ choices?: { message?: { content?: string } }[] }>("think", model, "/chat/completions", {
       json: {
         model,
         messages,
@@ -85,10 +95,13 @@ export class ZeroGRouter {
     return { content, receipt };
   }
 
-  /** Seedream (sync). Returns PNG/JPEG bytes. `reference` keeps the creature visually consistent. */
+  /**
+   * Seedream (sync). Returns JPEG/PNG bytes. `reference` (a data: URL or public URL of the previous
+   * portrait) keeps the creature visually consistent across days.
+   */
   async image(prompt: string, reference?: string): Promise<{ bytes: Uint8Array; receipt: Receipt }> {
     const model = env().ZG_MODEL_IMAGE;
-    const { body, receipt } = await this.call<{ data?: { b64_json?: string }[] }>("draw", model, "/images/generations", {
+    const { body, receipt } = await this.callJson<{ data?: { b64_json?: string }[] }>("draw", model, "/images/generations", {
       json: {
         model,
         prompt,
@@ -105,28 +118,60 @@ export class ZeroGRouter {
     return { bytes: Uint8Array.from(Buffer.from(b64, "base64")), receipt };
   }
 
-  /** Seedance image-to-video job. Returns the job id to poll. */
-  async submitVideo(prompt: string, imageUrl: string): Promise<{ jobId: string; receipt: Receipt }> {
+  /** Text-to-speech for the Familiar's reply line. Returns MP3 bytes. */
+  async speech(text: string): Promise<{ bytes: Uint8Array; receipt: Receipt }> {
+    const model = env().ZG_MODEL_TTS;
+    const started = performance.now();
+    const res = await this.post("/audio/speech", { json: { model, input: text.slice(0, 600), voice: env().ZG_TTS_VOICE, response_format: "mp3" }, timeoutMs: 60_000 });
+    if (!res.ok) throw await this.toError(res, "speak");
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    return { bytes, receipt: this.receipt("speak", model, res, {}, started) };
+  }
+
+  /** Seedance image-to-video job. `firstFrame` is a data: URL or public URL. Returns the job id. */
+  async submitVideo(prompt: string, firstFrame: string): Promise<{ jobId: string; receipt: Receipt }> {
     const model = env().ZG_MODEL_VIDEO;
-    const { body, receipt } = await this.call<{ id?: string }>("evolve", model, "/videos", {
+    const { body, receipt } = await this.callJson<{ id?: string }>("evolve", model, "/videos", {
       json: {
         model,
         prompt,
         seconds: 5,
-        metadata: { ratio: "1:1", resolution: "720p", generate_audio: false, content: [{ type: "image_url", image_url: { url: imageUrl }, role: "first_frame" }] },
+        metadata: {
+          resolution: env().ZG_VIDEO_RESOLUTION,
+          ratio: "1:1",
+          generate_audio: false,
+          content: [{ type: "image_url", image_url: { url: firstFrame }, role: "first_frame" }],
+        },
       },
     });
     if (!body.id) throw new AppError("UPSTREAM_ZEROG", "Seedance returned no job id");
     return { jobId: body.id, receipt };
   }
 
-  /** Poll a video job: `pending`, `failed`, or `done` with the mp4 bytes. */
-  async pollVideo(jobId: string): Promise<{ status: "pending" } | { status: "failed"; error: string } | { status: "done"; bytes: Uint8Array }> {
-    const res = await this.raw(`/videos/${encodeURIComponent(jobId)}/content`, { method: "GET" }, 60_000);
-    if (res.status === 409) return { status: "pending" };
-    if (res.status === 424) return { status: "failed", error: "provider failed to generate the clip" };
+  /** Poll a video job by status; download the mp4 once it has completed. */
+  async pollVideo(jobId: string): Promise<VideoPoll> {
+    const id = encodeURIComponent(jobId);
+    const res = await this.raw(`/videos/${id}`, { method: "GET" }, 30_000);
     if (!res.ok) throw await this.toError(res, "evolve");
-    return { status: "done", bytes: new Uint8Array(await res.arrayBuffer()) };
+    const job = (await res.json()) as { status?: string; error?: { message?: string } | string | null; x_0g_trace?: Trace };
+    const status = (job.status ?? "").toLowerCase();
+    if (["failed", "error", "cancelled", "canceled", "expired"].includes(status)) {
+      const err = typeof job.error === "string" ? job.error : (job.error?.message ?? status);
+      return { status: "failed", error: err };
+    }
+    if (!["completed", "succeeded", "success", "done"].includes(status)) return { status: "pending" };
+    const content = await this.raw(`/videos/${id}/content`, { method: "GET" }, 120_000);
+    if (content.status === 409) return { status: "pending" };
+    if (content.status === 424) return { status: "failed", error: "provider failed to generate the clip" };
+    if (!content.ok) throw await this.toError(content, "evolve");
+    const t = job.x_0g_trace ?? {};
+    return {
+      status: "done",
+      bytes: new Uint8Array(await content.arrayBuffer()),
+      billedRequestId: t.request_id ?? null,
+      cost: t.billing?.total_cost ?? null,
+      costCurrency: t.billing?.currency ?? null,
+    };
   }
 
   /** Account balance for the token's account (the user's, for iAI sessions). */
@@ -145,53 +190,58 @@ export class ZeroGRouter {
 
   // ------------------------------------------------------------------------------------------
 
-  private async call<T>(
+  private async callJson<T>(
     step: Step,
     model: string,
     path: string,
     req: { json?: unknown; body?: FormData; timeoutMs?: number },
   ): Promise<{ body: T & { x_0g_trace?: Trace; id?: string }; receipt: Receipt }> {
     const started = performance.now();
+    const res = await this.post(path, req, step);
+    if (!res.ok) throw await this.toError(res, step);
+    const body = (await res.json()) as T & { x_0g_trace?: Trace; id?: string };
+    return { body, receipt: this.receipt(step, model, res, body.x_0g_trace ?? {}, started) };
+  }
+
+  /** POST with one retry when no provider was available (the router already fails over itself). */
+  private async post(path: string, req: { json?: unknown; body?: FormData; timeoutMs?: number }, step: string = path): Promise<Response> {
     for (let attempt = 1; ; attempt++) {
       let res: Response;
       try {
         res = await this.raw(
           path,
-          {
-            method: "POST",
-            body: req.body ?? JSON.stringify(req.json),
-            headers: req.body ? {} : { "content-type": "application/json" },
-          },
+          { method: "POST", body: req.body ?? JSON.stringify(req.json), headers: req.body ? {} : { "content-type": "application/json" } },
           req.timeoutMs ?? 90_000,
         );
       } catch (e) {
         if (attempt < 2) continue;
         throw new AppError("UPSTREAM_ZEROG", `0G Router unreachable during ${step}`, undefined, { cause: e });
       }
-      if (!res.ok) {
-        // The router already fails over across providers; only retry when none was available.
-        if (attempt < 2 && res.status === 503) {
-          await new Promise((r) => setTimeout(r, 1500));
-          continue;
-        }
-        throw await this.toError(res, step);
+      if (attempt < 2 && res.status === 503) {
+        await new Promise((r) => setTimeout(r, 1500));
+        continue;
       }
-      const body = (await res.json()) as T & { x_0g_trace?: Trace; id?: string };
-      const trace = body.x_0g_trace ?? {};
-      const requestId = res.headers.get("x-request-id")?.split(",").pop()?.trim() || trace.request_id || body.id;
-      if (!requestId) throw new AppError("UPSTREAM_ZEROG", `0G Router returned no request id for ${step}`);
-      const receipt: Receipt = {
-        step,
-        model,
-        requestId: trace.request_id ?? requestId,
-        latencyMs: Math.round(performance.now() - started),
-        cost: trace.billing?.total_cost ?? null,
-        provider: trace.provider ?? res.headers.get("x-provider"),
-        teeVerified: trace.tee_verified ?? null,
-      };
-      log.info("zerog", { step, model, requestId: receipt.requestId, ms: receipt.latencyMs, cost: receipt.cost, tee: receipt.teeVerified });
-      return { body, receipt };
+      return res;
     }
+  }
+
+  private receipt(step: Step, model: string, res: Response, trace: Trace, started: number): Receipt {
+    // The router sends two X-Request-Id headers (gateway hex id, then the billing UUID); keep the UUID.
+    const headerId = res.headers.get("x-request-id")?.split(",").map((s) => s.trim()).pop();
+    const requestId = trace.request_id ?? headerId;
+    if (!requestId) throw new AppError("UPSTREAM_ZEROG", `0G Router returned no request id for ${step}`);
+    const r: Receipt = {
+      step,
+      model,
+      requestId,
+      latencyMs: Math.round(performance.now() - started),
+      cost: trace.billing?.total_cost ?? null,
+      costCurrency: trace.billing?.currency ?? null,
+      provider: trace.provider ?? res.headers.get("x-provider"),
+      teeVerified: trace.tee_verified ?? null,
+    };
+    log.info("zerog", { step, model, requestId, ms: r.latencyMs, cost: r.cost, currency: r.costCurrency, tee: r.teeVerified });
+    return r;
   }
 
   private raw(path: string, init: RequestInit, timeoutMs: number) {
@@ -223,6 +273,9 @@ export class ZeroGRouter {
     return new AppError("UPSTREAM_ZEROG", `0G ${step} failed: ${body.error?.message ?? code}`, details);
   }
 }
+
+/** data: URL for an image, used as a Seedream/Seedance reference without needing public hosting. */
+export const toDataUrl = (bytes: Uint8Array, contentType: string) => `data:${contentType};base64,${Buffer.from(bytes).toString("base64")}`;
 
 /** Exchange a Privy access token (0G's Privy app) for a 0G Router session JWT. */
 export async function exchangePrivyToken(privyToken: string, fetchImpl: typeof fetch = fetch) {

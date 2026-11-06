@@ -56,10 +56,22 @@ export const familiars = pgTable(
     /** 0G Storage root hash of the same ciphertext, when 0G Storage is enabled. */
     memoryRoot: text("memory_root"),
     hatchTx: text("hatch_tx"),
+    /** In-app currency earned by caring for the Familiar. */
+    sparks: integer("sparks").notNull().default(0),
+    xp: integer("xp").notNull().default(0),
+    /** slot → item id */
+    equipped: jsonb("equipped").$type<Record<string, string>>().notNull().default({}),
+    lastSpinDate: text("last_spin_date"),
+    /** When the last completed visit finished its AI step (care meters fall back to it). */
+    lastVisitAt: timestamp("last_visit_at", { withTimezone: true }),
+    /** Tamagotchi care: the latest time each action was done (meters are derived, no cron). */
+    lastPetAt: timestamp("last_pet_at", { withTimezone: true }),
+    lastSnackAt: timestamp("last_snack_at", { withTimezone: true }),
+    lastPlayAt: timestamp("last_play_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("familiars_owner_uq").on(t.owner)],
+  (t) => [uniqueIndex("familiars_owner_uq").on(t.owner), index("familiars_last_visit_idx").on(t.lastVisitAt)],
 );
 
 export const visits = pgTable(
@@ -80,6 +92,8 @@ export const visits = pgTable(
     reply: text("reply"),
     imageUrl: text("image_url"),
     imageHash: text("image_hash"),
+    /** Spoken reply (mp3). */
+    replyAudioUrl: text("reply_audio_url"),
     videoUrl: text("video_url"),
     /** Seedance job id for the evolution clip (every 7th visit). */
     videoJobId: text("video_job_id"),
@@ -109,11 +123,12 @@ export const receipts = pgTable(
     visitId: uuid("visit_id")
       .notNull()
       .references(() => visits.id),
-    step: text("step", { enum: ["transcribe", "think", "draw", "evolve"] }).notNull(),
+    step: text("step", { enum: ["transcribe", "think", "draw", "speak", "evolve"] }).notNull(),
     model: text("model").notNull(),
     requestId: text("request_id").notNull(),
     latencyMs: integer("latency_ms").notNull(),
     cost: text("cost"),
+    costCurrency: text("cost_currency"),
     provider: text("provider"),
     teeVerified: boolean("tee_verified"),
     createdAt: createdAt(),
@@ -153,6 +168,111 @@ export const feedQuotes = pgTable("feed_quotes", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   consumed: boolean("consumed").notNull().default(false),
   createdAt: createdAt(),
+});
+
+/** Accessories a Familiar owns. */
+export const inventory = pgTable(
+  "inventory",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    familiarId: uuid("familiar_id")
+      .notNull()
+      .references(() => familiars.id, { onDelete: "cascade" }),
+    itemId: text("item_id").notNull(),
+    source: text("source", { enum: ["shop", "spin", "quest"] }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("inventory_familiar_item_uq").on(t.familiarId, t.itemId)],
+);
+
+/** Every Sparks movement. `ref` is unique, so a reward can never be granted twice. */
+export const sparkLedger = pgTable(
+  "spark_ledger",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    familiarId: uuid("familiar_id")
+      .notNull()
+      .references(() => familiars.id, { onDelete: "cascade" }),
+    delta: integer("delta").notNull(),
+    reason: text("reason").notNull(),
+    ref: text("ref").notNull().unique(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("spark_ledger_familiar_idx").on(t.familiarId)],
+);
+
+/** Claimed quests, one per quest per period (day, ISO week or festival). */
+export const questClaims = pgTable(
+  "quest_claims",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    familiarId: uuid("familiar_id")
+      .notNull()
+      .references(() => familiars.id, { onDelete: "cascade" }),
+    questId: text("quest_id").notNull(),
+    period: text("period").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("quest_claims_uq").on(t.familiarId, t.questId, t.period)],
+);
+
+/** Explore: a Familiar spotted by another (once per pair). */
+export const sightings = pgTable(
+  "sightings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    spotterFamiliarId: uuid("spotter_familiar_id")
+      .notNull()
+      .references(() => familiars.id, { onDelete: "cascade" }),
+    spottedFamiliarId: uuid("spotted_familiar_id")
+      .notNull()
+      .references(() => familiars.id, { onDelete: "cascade" }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("sightings_pair_uq").on(t.spotterFamiliarId, t.spottedFamiliarId), index("sightings_spotted_idx").on(t.spottedFamiliarId)],
+);
+
+/** Gifts between Familiars: once per pair per UTC day. */
+export const gifts = pgTable(
+  "gifts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    fromFamiliarId: uuid("from_familiar_id")
+      .notNull()
+      .references(() => familiars.id, { onDelete: "cascade" }),
+    toFamiliarId: uuid("to_familiar_id")
+      .notNull()
+      .references(() => familiars.id, { onDelete: "cascade" }),
+    utcDate: text("utc_date").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("gifts_pair_day_uq").on(t.fromFamiliarId, t.toFamiliarId, t.utcDate), index("gifts_to_idx").on(t.toFamiliarId)],
+);
+
+/** Personal API keys (`fam_…`) for ChatGPT / Claude connectors. Only the SHA-256 is stored. */
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Lowercased owner address. */
+    owner: text("owner").notNull(),
+    label: text("label").notNull(),
+    /** First characters of the key, shown so the owner can tell keys apart. */
+    prefix: text("prefix").notNull(),
+    /** sha256(key), hex. */
+    hash: text("hash").notNull().unique(),
+    createdAt: createdAt(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [index("api_keys_owner_idx").on(t.owner)],
+);
+
+/** Last nonce handed out per (chain, account), written under an advisory lock. */
+export const txNonces = pgTable("tx_nonces", {
+  key: text("key").primaryKey(),
+  nonce: integer("nonce").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 /** Fixed-window rate limiting. */

@@ -41,7 +41,7 @@ export async function mockZeroG(o: { privyWallet: () => Address }) {
     const isJson = (req.headers["content-type"] ?? "").includes("json");
     calls.push({ path, auth: req.headers.authorization, headers: req.headers, body: isJson && raw.length ? JSON.parse(raw.toString()) : raw.length });
     const id = `0g-req-${++n}`;
-    const trace = { request_id: id, provider: "0x00000000000000000000000000000000000000Aa", billing: { total_cost: "1000000000000" }, tee_verified: true };
+    const trace = { request_id: id, provider: "0x00000000000000000000000000000000000000Aa", billing: { total_cost: "910", currency: "usd" }, tee_verified: true };
     const send = (status: number, body: unknown) => {
       res.writeHead(status, { "content-type": "application/json", "x-request-id": id });
       res.end(JSON.stringify(body));
@@ -59,7 +59,17 @@ export async function mockZeroG(o: { privyWallet: () => Address }) {
       return send(200, { id: `chat-${id}`, choices: [{ message: { role: "assistant", content } }], x_0g_trace: trace });
     }
     if (path === "/images/generations") return send(200, { data: [{ b64_json: PNG_1x1 }], x_0g_trace: trace });
+    if (path === "/audio/speech") {
+      res.writeHead(200, { "content-type": "audio/mpeg", "x-request-id": `gw${n}, ${id}` });
+      return res.end(Buffer.from("ID3-mock-mp3"));
+    }
     if (path === "/videos") return send(200, { id: `vid-${id}`, status: "queued" });
+    const vid = path.match(/^\/videos\/([^/]+)(\/content)?$/);
+    if (vid?.[2]) {
+      res.writeHead(200, { "content-type": "video/mp4" });
+      return res.end(Buffer.from("mock-mp4"));
+    }
+    if (vid) return send(200, { id: vid[1], status: "completed", x_0g_trace: { request_id: `async-${vid[1]}`, billing: { total_cost: "217280", currency: "usd" } } });
     send(404, { error: { code: "not_found", message: path } });
   });
   const url = await listen(server);

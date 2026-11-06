@@ -1,7 +1,12 @@
 import type { schema } from "../db/client";
 import { explorer } from "../chain/clients";
+import { demoLabels } from "../env";
 import { fullName } from "../chain/ens";
 import { type Stage, isEvolutionDay, nextRefresh, stageFor, utcDate } from "./rules";
+import { activeFestival, itemById } from "../game/catalog";
+import { levelFor } from "../game/progress";
+import { type CareView, careView } from "../game/meters";
+import { env } from "../env";
 
 type FamiliarRow = typeof schema.familiars.$inferSelect;
 type VisitRow = typeof schema.visits.$inferSelect;
@@ -31,10 +36,19 @@ export interface FamiliarView {
   creditsRefreshAt: string;
   /** Prepaid visits from Uniswap feeds that are not used yet. */
   feedCredits: number;
+  /** Demo Familiar: visits are free and not limited to one per night. */
+  demo: boolean;
+  sparks: number;
+  level: { level: number; xp: number; intoLevel: number; levelSize: number; toNext: number };
+  equipped: { slot: string; id: string; name: string; art: string }[];
+  spunToday: boolean;
+  festival: { id: string; name: string; end: string } | null;
+  /** Tamagotchi meters, derived from the last care actions. */
+  care: CareView;
   links: { ens: string; resolver: string };
 }
 
-export function familiarView(f: FamiliarRow, opts: { feedCredits: number; now?: Date }): FamiliarView {
+export function familiarView(f: FamiliarRow, opts: { feedCredits: number; now?: Date; demo?: boolean }): FamiliarView {
   const now = opts.now ?? new Date();
   const dormant = f.expiresAt.getTime() <= now.getTime();
   return {
@@ -58,6 +72,19 @@ export function familiarView(f: FamiliarRow, opts: { feedCredits: number; now?: 
     nextVisitIsEvolution: isEvolutionDay(f.day + 1),
     creditsRefreshAt: nextRefresh(now).toISOString(),
     feedCredits: opts.feedCredits,
+    demo: opts.demo ?? demoLabels().has(f.label),
+    sparks: f.sparks,
+    level: levelFor(f.xp),
+    equipped: Object.entries(f.equipped ?? {}).flatMap(([slot, id]) => {
+      const item = itemById(id);
+      return item ? [{ slot, id, name: item.name, art: item.art }] : [];
+    }),
+    spunToday: f.lastSpinDate === utcDate(now),
+    festival: (() => {
+      const fest = activeFestival(utcDate(now), env().FESTIVAL);
+      return fest ? { id: fest.id, name: fest.name, end: fest.end } : null;
+    })(),
+    care: careView(f, now),
     links: { ens: `/api/ens/${f.label}`, resolver: explorer.sepoliaAddress(f.resolver) },
   };
 }
@@ -67,8 +94,13 @@ export interface ReceiptView {
   model: string;
   requestId: string;
   latencyMs: number;
+  /** Raw billed cost in `costCurrency` units (micro-USD for "usd", neuron for "0g"). */
   cost: string | null;
+  costCurrency: string | null;
+  /** Cost in USD, when the account is USD-settled. */
+  costUsd: number | null;
   provider: string | null;
+  /** true when the router verified the provider's TEE signature; null for non-TEE providers. */
   teeVerified: boolean | null;
 }
 
@@ -78,6 +110,8 @@ export const receiptView = (r: ReceiptRow): ReceiptView => ({
   requestId: r.requestId,
   latencyMs: r.latencyMs,
   cost: r.cost,
+  costCurrency: r.costCurrency,
+  costUsd: r.cost && r.costCurrency === "usd" ? Number(r.cost) / 1e6 : null,
   provider: r.provider,
   teeVerified: r.teeVerified,
 });
@@ -92,6 +126,8 @@ export interface VisitView {
   mood: string | null;
   reply: string | null;
   imageUrl: string | null;
+  /** MP3 of the reply spoken in the Familiar's voice. */
+  replyAudioUrl: string | null;
   video: { status: VisitRow["videoStatus"]; url: string | null };
   receipts: ReceiptView[];
   /** keccak256(requestIds.join(",")) — matches the Day event on 0G Chain. */
@@ -117,6 +153,7 @@ export function visitView(v: VisitRow, receipts: ReceiptRow[]): VisitView {
     mood: v.mood,
     reply: v.reply,
     imageUrl: v.imageUrl,
+    replyAudioUrl: v.replyAudioUrl,
     video: { status: v.videoStatus, url: v.videoUrl },
     receipts: receipts.map(receiptView),
     requestIdsHash: v.requestIdsHash,

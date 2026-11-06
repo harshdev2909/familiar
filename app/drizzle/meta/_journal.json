@@ -8,6 +8,34 @@
       "when": 1793886085317,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793942349913,
+      "tag": "0001_tts_costs_nonces",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793975195040,
+      "tag": "0002_game",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793975716928,
+      "tag": "0003_backfill_sparks",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793976675268,
+      "tag": "0004_care_social_keys",
+      "breakpoints": true
     }
   ]
 }

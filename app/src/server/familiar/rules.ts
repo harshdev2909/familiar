@@ -36,7 +36,8 @@ export function styleSeed(species: string, color: string) {
   return `cute round ${species} creature, ${color} fur, soft watercolor, storybook illustration, centered, plain background, same character as before`;
 }
 
-export const imagePromptFor = (seed: string, stage: Stage, scene: string) => `${seed}, ${STAGE_MODIFIER[stage]}. ${scene}`;
+export const imagePromptFor = (seed: string, stage: Stage, scene: string, wearing: string[] = []) =>
+  `${seed}, ${STAGE_MODIFIER[stage]}${wearing.length ? `, ${wearing.join(", ")}` : ""}. ${scene}`;
 
 /** YYYY-MM-DD in UTC. */
 export const utcDate = (d = new Date()) => d.toISOString().slice(0, 10);

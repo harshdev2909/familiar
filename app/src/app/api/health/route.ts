@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { connection } from "next/server";
-import { publicClient, contracts } from "@/server/chain/clients";
+import { agentBalances, publicClient, contracts } from "@/server/chain/clients";
 import { db } from "@/server/db/client";
 import { env } from "@/server/env";
 import { route } from "@/server/http";
@@ -24,6 +24,7 @@ export const GET = route(async () => {
     check(() => publicClient("base").getBlockNumber()),
     check(() => publicClient("zg").getBlockNumber()),
   ]);
+  const agent = await agentBalances().catch(() => null);
   const ok = database.ok && sepolia.ok && base.ok && zg.ok;
   return Response.json(
     {
@@ -38,6 +39,8 @@ export const GET = route(async () => {
         cronSecret: Boolean(e.CRON_SECRET),
       },
       contracts: contracts(),
+      // Gas for ENS writes (Sepolia) and day logs (0G). `low` means top it up.
+      agent,
       models: { stt: e.ZG_MODEL_STT, chat: e.ZG_MODEL_CHAT, image: e.ZG_MODEL_IMAGE, video: e.ZG_MODEL_VIDEO },
     },
     { status: ok ? 200 : 503 },

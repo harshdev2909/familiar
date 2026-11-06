@@ -8,12 +8,15 @@ import { type DB, db, schema } from "../db/client";
 import { demoLabels, env } from "../env";
 import { AppError } from "../errors";
 import { log } from "../log";
-import { imageType, storeMedia } from "../media";
+import { assertMediaConfigured, deleteMedia, imageType, loadMedia, storeMedia } from "../media";
 import { decryptMemory, encryptMemory, persistMemory } from "../zerog/memory";
-import { type Receipt, ZeroGRouter } from "../zerog/router";
+import { type Receipt, ZeroGRouter, toDataUrl } from "../zerog/router";
 import { type VisitKind, runPipeline } from "./pipeline";
 import { COLORS, SPECIES, defaultLook, isEvolutionDay, nextStreak, stageFor, styleSeed, utcDate } from "./rules";
 import { familiarView, galleryView, visitView } from "./views";
+import { grant, wearing } from "../game/service";
+import { REWARDS, levelFor, visitSparks } from "../game/progress";
+import { visitSparksMultiplier } from "../game/events";
 
 type FamiliarRow = typeof schema.familiars.$inferSelect;
 type VisitRow = typeof schema.visits.$inferSelect;
@@ -21,6 +24,23 @@ type VisitRow = typeof schema.visits.$inferSelect;
 export interface AudioInput {
   blob: Blob;
   filename: string;
+}
+
+/** What the human said tonight: a voice note or typed text (never both). */
+export interface Said {
+  audio?: AudioInput;
+  text?: string;
+}
+
+export const MAX_TEXT_CHARS = 1000;
+
+/** Validate a voice-or-text input. Blank text counts as absent. */
+export function normalizeSaid(input: Said | undefined, required: boolean): Said {
+  const text = input?.text?.trim() || undefined;
+  if (input?.audio && text) throw new AppError("BAD_REQUEST", "Send a voice note or text, not both");
+  if (text && text.length > MAX_TEXT_CHARS) throw new AppError("BAD_REQUEST", `Keep it under ${MAX_TEXT_CHARS} characters`);
+  if (required && !input?.audio && !text) throw new AppError("BAD_REQUEST", "Send a voice note or some text");
+  return { audio: input?.audio, text };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -52,6 +72,14 @@ export async function familiarState(label: string) {
   return familiarView(f, { feedCredits: await feedCredits(f.id) });
 }
 
+/** The signed-in human's Familiar row, or a NOT_FOUND asking them to hatch one. */
+export async function myFamiliarRow(session: Session): Promise<FamiliarRow> {
+  const d = await db();
+  const f = await d.query.familiars.findFirst({ where: eq(schema.familiars.owner, session.address.toLowerCase()) });
+  if (!f) throw new AppError("NOT_FOUND", "Hatch a Familiar first");
+  return f;
+}
+
 export async function familiarOf(owner: Address) {
   const d = await db();
   const f = await d.query.familiars.findFirst({ where: eq(schema.familiars.owner, owner.toLowerCase()) });
@@ -78,10 +106,14 @@ export async function getVisit(id: string, viewer: Address) {
   const d = await db();
   const v = await d.query.visits.findFirst({ where: eq(schema.visits.id, id) });
   if (!v) throw new AppError("NOT_FOUND", "Visit not found");
-  const f = await d.query.familiars.findFirst({ where: eq(schema.familiars.id, v.familiarId) });
+  // One round of parallel queries: this endpoint is polled every few seconds after a visit.
+  const [f, receipts, credits] = await Promise.all([
+    d.query.familiars.findFirst({ where: eq(schema.familiars.id, v.familiarId) }),
+    d.query.receipts.findMany({ where: eq(schema.receipts.visitId, id), orderBy: asc(schema.receipts.createdAt) }),
+    feedCredits(v.familiarId, d),
+  ]);
   if (f?.owner !== viewer.toLowerCase()) throw new AppError("NOT_FOUND", "Visit not found");
-  const receipts = await d.query.receipts.findMany({ where: eq(schema.receipts.visitId, id), orderBy: asc(schema.receipts.createdAt) });
-  return { visit: visitView(v, receipts), familiar: familiarView(f, { feedCredits: await feedCredits(f.id) }) };
+  return { visit: visitView(v, receipts), familiar: familiarView(f, { feedCredits: credits }) };
 }
 
 export async function checkName(raw: string) {
@@ -94,7 +126,9 @@ export async function checkName(raw: string) {
 // Hatch
 // ---------------------------------------------------------------------------------------------
 
-export async function hatch(session: Session, input: { name: string; species?: string; color?: string; audio: AudioInput }) {
+export async function hatch(session: Session, input: { name: string; species?: string; color?: string } & Said) {
+  assertMediaConfigured();
+  const said = normalizeSaid(input, true);
   const label = normalizeLabel(input.name);
   const owner = getAddress(session.address);
   const d = await db();
@@ -109,17 +143,24 @@ export async function hatch(session: Session, input: { name: string; species?: s
   if (!(SPECIES as readonly string[]).includes(species)) throw new AppError("BAD_REQUEST", `species must be one of ${SPECIES.join(", ")}`);
   if (!(COLORS as readonly string[]).includes(color)) throw new AppError("BAD_REQUEST", `color must be one of ${COLORS.join(", ")}`);
 
-  // Idempotent onchain step: adopt a hatch that landed onchain but never reached the DB.
+  const freeHatch = !(session.method === "iai" && session.zgUserToken) && !demoLabels().has(label);
+  if (freeHatch) await enforceFreeHatchCap();
+
+  // A name already onchain for this human (a hatch that never reached the DB, a Familiar whose
+  // off-chain data was forgotten, or one created by a script) is adopted with its onchain state.
   const onchain = await readFamiliar(label);
-  let hatched: { resolver: Address; generation: number; expiresAt: Date; txHash: Hex | null };
+  let hatched: { resolver: Address; generation: number; expiresAt: Date; txHash: Hex | null; day: number };
   if (onchain.exists) {
-    if (onchain.bondedOwner.toLowerCase() !== owner.toLowerCase() || onchain.dormant || onchain.day > 0) {
-      throw new AppError("NAME_TAKEN", "That name is taken");
+    if (onchain.bondedOwner.toLowerCase() !== owner.toLowerCase()) throw new AppError("NAME_TAKEN", "That name is taken");
+    if (onchain.dormant) {
+      const woke = await wakeOnchain(label);
+      hatched = { ...woke, day: onchain.day };
+    } else {
+      hatched = { resolver: onchain.resolver, generation: onchain.generation, expiresAt: onchain.expiresAt, txHash: null, day: onchain.day };
     }
-    hatched = { resolver: onchain.resolver, generation: onchain.generation, expiresAt: onchain.expiresAt, txHash: null };
-    log.warn("hatch_adopted", { label });
+    log.warn("hatch_adopted", { label, day: onchain.day, generation: hatched.generation });
   } else {
-    hatched = await hatchOnchain(label, owner);
+    hatched = { ...(await hatchOnchain(label, owner)), day: 0 };
   }
 
   await d.insert(schema.users).values({ address: owner.toLowerCase(), privyUserId: session.privyUserId }).onConflictDoNothing();
@@ -137,6 +178,7 @@ export async function hatch(session: Session, input: { name: string; species?: s
         resolver: hatched.resolver,
         generation: hatched.generation,
         expiresAt: hatched.expiresAt,
+        day: hatched.day,
         hatchTx: hatched.txHash,
       })
       .returning()) as [FamiliarRow];
@@ -145,7 +187,7 @@ export async function hatch(session: Session, input: { name: string; species?: s
     throw e;
   }
 
-  const result = await runVisit({ session, familiar, kind: "hatch", audio: input.audio, payment: "free-or-iai" });
+  const result = await runVisit({ session, familiar, kind: "hatch", said, payment: "free-or-iai" });
   return { ...result, hatchTx: hatched.txHash };
 }
 
@@ -153,16 +195,19 @@ export async function hatch(session: Session, input: { name: string; species?: s
 // Visit / wake
 // ---------------------------------------------------------------------------------------------
 
-export async function visit(session: Session, rawLabel: string, audio: AudioInput) {
+export async function visit(session: Session, rawLabel: string, input: Said) {
+  const said = normalizeSaid(input, true);
   const familiar = await requireOwned(session, rawLabel);
   if (familiar.expiresAt.getTime() <= Date.now()) {
     throw new AppError("DORMANT", `${familiar.label} is asleep — wake it up first`, { label: familiar.label });
   }
   enforceDaily(familiar);
-  return runVisit({ session, familiar, kind: "visit", audio, payment: "required" });
+  return runVisit({ session, familiar, kind: "visit", said, payment: "required" });
 }
 
-export async function wake(session: Session, rawLabel: string, audio?: AudioInput) {
+export async function wake(session: Session, rawLabel: string, input?: Said) {
+  assertMediaConfigured();
+  const said = normalizeSaid(input, false);
   let familiar = await requireOwned(session, rawLabel);
   const onchain = await readFamiliar(familiar.label);
   if (!onchain.dormant) throw new AppError("NOT_DORMANT", `${familiar.label} is awake`);
@@ -180,7 +225,7 @@ export async function wake(session: Session, rawLabel: string, audio?: AudioInpu
     await releasePayment(payment);
     throw e;
   }
-  return runVisit({ session, familiar, kind: "wake", audio, payment: "reserved", reserved: payment });
+  return runVisit({ session, familiar, kind: "wake", said, payment: "reserved", reserved: payment });
 }
 
 async function requireOwned(session: Session, rawLabel: string) {
@@ -198,7 +243,20 @@ function enforceDaily(f: FamiliarRow) {
 
 type Payment = { kind: "iai" } | { kind: "feed"; feedId: string } | { kind: "free" };
 
+/** Team-paid hatches per UTC day are capped to bound abuse (0G sign-in hatches are uncapped). */
+async function enforceFreeHatchCap() {
+  const d = await db();
+  const [row] = await d
+    .select({ n: sql<number>`count(*)::int` })
+    .from(schema.visits)
+    .where(and(eq(schema.visits.kind, "hatch"), eq(schema.visits.paidBy, "free"), eq(schema.visits.utcDate, utcDate())));
+  if (Number(row?.n ?? 0) >= env().FREE_HATCHES_PER_DAY) {
+    throw new AppError("RATE_LIMITED", "Today's free hatches are taken — sign in with 0G to hatch now, or come back after 00:00 UTC");
+  }
+}
+
 async function reservePayment(session: Session, f: FamiliarRow): Promise<Payment> {
+  if (demoLabels().has(f.label)) return { kind: "free" };
   if (session.method === "iai") {
     if (!session.zgUserToken) throw new AppError("UNAUTHENTICATED", "0G session missing — sign in with 0G again");
     return { kind: "iai" };
@@ -239,7 +297,7 @@ interface RunVisit {
   session: Session;
   familiar: FamiliarRow;
   kind: VisitKind;
-  audio?: AudioInput;
+  said: Said;
   /** hatch: free (team covers it) unless signed in with 0G; visit: must pay; wake: already reserved. */
   payment: "free-or-iai" | "required" | "reserved";
   reserved?: Payment;
@@ -250,6 +308,7 @@ interface RunVisit {
  * onchain writes run afterwards via `finalizeChain` and are retried by the reconcile cron.
  */
 async function runVisit(r: RunVisit) {
+  assertMediaConfigured();
   const d = await db();
   const f = r.familiar;
   const payment: Payment =
@@ -285,6 +344,7 @@ async function runVisit(r: RunVisit) {
   try {
     const router = routerFor(r.session, payment, visitRow.id);
     const memory = await decryptMemory(f.ensNode as Hex, f.memoryCiphertext);
+    const previous = f.portraitUrl ? await loadMedia(f.portraitUrl) : null;
     const out = await runPipeline({
       router,
       name: f.label,
@@ -292,9 +352,13 @@ async function runVisit(r: RunVisit) {
       day,
       stage: stageFor(day),
       styleSeed: f.styleSeed,
+      body: `a small ${f.color} ${f.species} ${stageFor(day)}${wearing(f.equipped).length ? `, ${wearing(f.equipped).join(", ")}` : ""}`,
+      wearing: wearing(f.equipped),
       memory,
-      audio: r.audio,
-      previousPortrait: f.portraitUrl,
+      audio: r.said.audio,
+      text: r.said.text,
+      previousPortrait: previous ? toDataUrl(previous.bytes, previous.contentType) : null,
+      speak: env().ZG_TTS_ENABLED,
       onReceipt: async (rc) => {
         receipts.push(rc);
         await d.insert(schema.receipts).values({ visitId: visitRow.id, ...rc });
@@ -303,6 +367,7 @@ async function runVisit(r: RunVisit) {
 
     const { contentType, ext } = imageType(out.image);
     const portrait = await storeMedia(`portraits/${f.label}/day-${day}-g${f.generation}.${ext}`, out.image, contentType);
+    const voice = out.speech ? await storeMedia(`voice/${f.label}/day-${day}-g${f.generation}.mp3`, out.speech, "audio/mpeg") : null;
     const sealed = await encryptMemory(f.ensNode as Hex, out.thought.memory_update);
     const mem = await persistMemory(sealed);
     const reqHash = requestIdsHash(out.receipts.map((x) => x.requestId));
@@ -317,6 +382,7 @@ async function runVisit(r: RunVisit) {
         reply: out.thought.reply,
         imageUrl: portrait.url,
         imageHash: portrait.hash,
+        replyAudioUrl: voice?.url ?? null,
         memoryRoot: mem.root,
         requestIdsHash: reqHash,
         videoStatus: isEvolutionDay(day) ? "pending" : "none",
@@ -324,12 +390,23 @@ async function runVisit(r: RunVisit) {
       .where(eq(schema.visits.id, visitRow.id))
       .returning()) as [VisitRow];
 
+    const streak = nextStreak(f.lastVisitDate, f.streak, today);
+    const levelBefore = levelFor(f.xp).level;
+    // Event bonuses (e.g. 2× during ETHGlobal Mumbai) multiply the nightly Sparks, not the hatch gift.
+    const earned = {
+      sparks: visitSparks(streak) * visitSparksMultiplier() + (r.kind === "hatch" ? REWARDS.hatch.sparks : 0),
+      xp: REWARDS.visit.xp + (r.kind === "hatch" ? REWARDS.hatch.xp : 0),
+    };
+    await d.transaction(async (tx) => {
+      await grant(tx, f.id, { sparks: earned.sparks, xp: earned.xp, reason: `visit:${r.kind}`, ref: `visit:${visitRow.id}` });
+    });
     const [updated] = (await d
       .update(schema.familiars)
       .set({
         day,
-        streak: nextStreak(f.lastVisitDate, f.streak, today),
+        streak,
         lastVisitDate: today,
+        lastVisitAt: new Date(),
         mood: out.thought.mood,
         portraitUrl: portrait.url,
         memoryCiphertext: sealed,
@@ -344,6 +421,7 @@ async function runVisit(r: RunVisit) {
       visit: visitView(visitRow, savedReceipts),
       familiar: familiarView(updated, { feedCredits: await feedCredits(f.id) }),
       memory: { root: mem.root, onZeroGStorage: mem.onZeroGStorage },
+      reward: { ...earned, leveledUp: levelFor(updated.xp).level > levelBefore, level: levelFor(updated.xp).level },
       evolve: isEvolutionDay(day) ? { visitId: visitRow.id, portraitUrl: portrait.url, prompt: out.imagePrompt, iai: payment.kind === "iai" } : null,
     };
   } catch (e) {
@@ -408,7 +486,12 @@ export async function finalizeChain(visitId: string): Promise<VisitRow> {
 export async function startEvolution(e: { visitId: string; portraitUrl: string; prompt: string }, router: ZeroGRouter) {
   const d = await db();
   try {
-    const { jobId, receipt } = await router.submitVideo(`${e.prompt}. The creature grows into its next form, gentle magical transformation, slow camera push-in.`, e.portraitUrl);
+    const frame = await loadMedia(e.portraitUrl);
+    if (!frame) throw new Error("portrait unavailable for the first frame");
+    const { jobId, receipt } = await router.submitVideo(
+      `${e.prompt}. The creature grows into its next form, gentle magical transformation, slow camera push-in.`,
+      toDataUrl(frame.bytes, frame.contentType),
+    );
     await d.insert(schema.receipts).values({ visitId: e.visitId, ...receipt });
     await d.update(schema.visits).set({ videoJobId: jobId, videoStatus: "pending" }).where(eq(schema.visits.id, e.visitId));
   } catch (err) {
@@ -429,9 +512,37 @@ export async function pollEvolution(visitId: string) {
     const [u] = await d.update(schema.visits).set({ videoStatus: "failed" }).where(eq(schema.visits.id, v.id)).returning();
     return u;
   }
-  const clip = await storeMedia(`clips/${f.label}/day-${v.day}.mp4`, res.bytes, "video/mp4");
+  const clip = await storeMedia(`clips/${f.label}/day-${v.day}-g${f.generation}.mp4`, res.bytes, "video/mp4");
+  // Async jobs are billed under their own id at completion: record the real id and cost.
+  if (res.billedRequestId) {
+    await d
+      .update(schema.receipts)
+      .set({ requestId: res.billedRequestId, cost: res.cost, costCurrency: res.costCurrency })
+      .where(and(eq(schema.receipts.visitId, v.id), eq(schema.receipts.step, "evolve")));
+  }
   const [u] = await d.update(schema.visits).set({ videoStatus: "done", videoUrl: clip.url }).where(eq(schema.visits.id, v.id)).returning();
   return u;
+}
+
+/**
+ * "Forget me": delete everything we hold off-chain about a Familiar — encrypted memory, replies,
+ * receipts, portraits, voice, clips and unused feed credits. The onchain name and its public
+ * records stay with the owner; hatching the same name again adopts it with a blank memory.
+ */
+export async function forget(session: Session, rawLabel: string) {
+  const f = await requireOwned(session, rawLabel);
+  const d = await db();
+  const rows = await d.query.visits.findMany({ where: eq(schema.visits.familiarId, f.id) });
+  const media = rows.flatMap((v) => [v.imageUrl, v.replyAudioUrl, v.videoUrl]).filter((u): u is string => Boolean(u));
+  const ids = rows.map((v) => v.id);
+  if (ids.length) await d.delete(schema.receipts).where(inArray(schema.receipts.visitId, ids));
+  await d.delete(schema.visits).where(eq(schema.visits.familiarId, f.id));
+  await d.delete(schema.feedQuotes).where(eq(schema.feedQuotes.familiarId, f.id));
+  await d.delete(schema.feeds).where(eq(schema.feeds.familiarId, f.id));
+  await d.delete(schema.familiars).where(eq(schema.familiars.id, f.id));
+  await deleteMedia(media);
+  log.info("familiar_forgotten", { label: f.label, visits: ids.length, media: media.length });
+  return { forgotten: f.label, visits: ids.length };
 }
 
 export function isUniqueViolation(e: unknown): boolean {

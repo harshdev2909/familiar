@@ -1,16 +1,505 @@
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+@import "tailwindcss";
+
+/*
+ * Familiar — "Ivory Linen" (warm · minimal).
+ * Seeds: base #FAF8F3 · surface #FFFFFF · primary #953E32 (terracotta) · soft #D37D6F · text #1A1413.
+ * Every foreground/background pair passes WCAG AA (body ≥ 4.5:1, UI ≥ 3:1). See /brand.
+ */
+@layer base {
+  :root {
+    --background: oklch(0.98 0.005 75);
+    --foreground: oklch(0.2 0.01 30);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.2 0.01 30);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.2 0.01 30);
+    --primary: oklch(0.48 0.12 30);
+    --primary-foreground: oklch(0.98 0.005 30);
+    --secondary: oklch(0.945 0.01 75);
+    --secondary-foreground: oklch(0.2 0.01 30);
+    --muted: oklch(0.955 0.006 75);
+    --muted-foreground: oklch(0.47 0.01 30);
+    --accent: oklch(0.935 0.015 50);
+    --accent-foreground: oklch(0.2 0.01 30);
+    --destructive: oklch(0.55 0.22 25);
+    --destructive-foreground: oklch(0.98 0 0);
+    --border: oklch(0.905 0.008 75);
+    --input: oklch(0.965 0.006 75);
+    --ring: oklch(0.48 0.12 30);
+    --radius: 0.75rem;
+
+    /* Brand extensions */
+    --soft: oklch(0.68 0.11 30);
+    --wash: oklch(0.955 0.022 45);
+    --paper: oklch(0.975 0.008 80);
+    --success: oklch(0.52 0.11 150);
+    --gradient-bg: radial-gradient(120% 80% at 50% 0%, oklch(0.96 0.025 55) 0%, var(--background) 60%);
+    --gradient-accent: linear-gradient(135deg, var(--primary) 0%, var(--soft) 100%);
+    --shadow-soft: 0 1px 0 oklch(0.2 0.01 30 / 0.04), 0 24px 48px -28px oklch(0.3 0.04 30 / 0.35);
+
+    /* Pastel accents — a wash (`--x`) for fills and an ink (`--x-ink`) for text/rings on that wash (AA). */
+    --blush: oklch(0.93 0.04 15);
+    --blush-ink: oklch(0.5 0.13 12);
+    --mint: oklch(0.94 0.045 165);
+    --mint-ink: oklch(0.46 0.09 165);
+    --butter: oklch(0.955 0.065 95);
+    --butter-ink: oklch(0.48 0.09 80);
+    --lilac: oklch(0.93 0.04 300);
+    --lilac-ink: oklch(0.47 0.12 300);
+    --sky: oklch(0.935 0.04 235);
+    --sky-ink: oklch(0.46 0.1 245);
+    --peach: oklch(0.93 0.05 55);
+    --peach-ink: oklch(0.5 0.12 45);
+    /* The egg device's LCD — the same in both themes, like a real screen. */
+    --lcd: oklch(0.86 0.07 125);
+    --lcd-ink: oklch(0.3 0.05 140);
+    /* Sticker: a paper-white edge and a short, crisp drop. */
+    --shadow-sticker: 0 0 0 3px var(--card), 0 2px 0 3px oklch(0.2 0.01 30 / 0.06), 0 14px 24px -16px oklch(0.3 0.04 30 / 0.45);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --background: oklch(0.15 0.01 40);
+      --foreground: oklch(0.96 0.008 70);
+      --card: oklch(0.2 0.012 40);
+      --card-foreground: oklch(0.96 0.008 70);
+      --popover: oklch(0.22 0.012 40);
+      --popover-foreground: oklch(0.96 0.008 70);
+      --primary: oklch(0.72 0.12 35);
+      --primary-foreground: oklch(0.15 0.02 35);
+      --secondary: oklch(0.24 0.022 40);
+      --secondary-foreground: oklch(0.96 0.008 70);
+      --muted: oklch(0.22 0.012 40);
+      --muted-foreground: oklch(0.7 0.01 70);
+      --accent: oklch(0.26 0.02 35);
+      --accent-foreground: oklch(0.96 0.008 70);
+      --destructive: oklch(0.65 0.22 25);
+      --destructive-foreground: oklch(0.98 0 0);
+      --border: oklch(0.28 0.012 40);
+      --input: oklch(0.2 0.012 40);
+      --ring: oklch(0.72 0.12 35);
+
+      --soft: oklch(0.84 0.07 35);
+      --wash: oklch(0.21 0.025 40);
+      --paper: oklch(0.18 0.012 45);
+      --success: oklch(0.74 0.11 150);
+      --gradient-bg: radial-gradient(120% 80% at 50% 0%, oklch(0.21 0.03 40) 0%, var(--background) 60%);
+      --shadow-soft: 0 1px 0 oklch(0 0 0 / 0.2), 0 24px 48px -28px oklch(0 0 0 / 0.6);
+
+      --blush: oklch(0.3 0.05 12);
+      --blush-ink: oklch(0.86 0.08 12);
+      --mint: oklch(0.3 0.045 165);
+      --mint-ink: oklch(0.86 0.08 165);
+      --butter: oklch(0.31 0.045 90);
+      --butter-ink: oklch(0.9 0.09 92);
+      --lilac: oklch(0.3 0.05 300);
+      --lilac-ink: oklch(0.86 0.08 300);
+      --sky: oklch(0.3 0.045 240);
+      --sky-ink: oklch(0.86 0.07 235);
+      --peach: oklch(0.31 0.05 50);
+      --peach-ink: oklch(0.87 0.08 55);
+      --lcd: oklch(0.8 0.07 125);
+      --lcd-ink: oklch(0.26 0.05 140);
+      --shadow-sticker: 0 0 0 3px var(--card), 0 2px 0 3px oklch(0 0 0 / 0.25), 0 14px 24px -16px oklch(0 0 0 / 0.7);
+    }
+  }
 }
 
-html,
-body {
-  max-width: 100vw;
-  overflow-x: hidden;
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-soft: var(--soft);
+  --color-wash: var(--wash);
+  --color-paper: var(--paper);
+  --color-success: var(--success);
+  --color-blush: var(--blush);
+  --color-blush-ink: var(--blush-ink);
+  --color-mint: var(--mint);
+  --color-mint-ink: var(--mint-ink);
+  --color-butter: var(--butter);
+  --color-butter-ink: var(--butter-ink);
+  --color-lilac: var(--lilac);
+  --color-lilac-ink: var(--lilac-ink);
+  --color-sky: var(--sky);
+  --color-sky-ink: var(--sky-ink);
+  --color-peach: var(--peach);
+  --color-peach-ink: var(--peach-ink);
+  --color-lcd: var(--lcd);
+  --color-lcd-ink: var(--lcd-ink);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 6px);
+  --radius-2xl: calc(var(--radius) + 14px);
+  /* Bubbly: big, soft corners for stickers and sheets. */
+  --radius-bubble: 1.75rem;
+  --radius-blob: 2.25rem;
+
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-dm-mono), ui-monospace, monospace;
+
+  --shadow-soft: var(--shadow-soft);
+  --shadow-sticker: var(--shadow-sticker);
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-breathe: breathe 4.8s var(--ease-out-soft) infinite;
+  --animate-rise: rise 0.6s var(--ease-out-soft) both;
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --animate-wobble: wobble 0.7s var(--ease-out-soft) both;
+  --animate-bounce-soft: bounce-soft 0.6s var(--ease-bounce) both;
+  --animate-bob: bob 3.2s ease-in-out infinite;
+  --animate-float-heart: float-heart 1.4s var(--ease-out-soft) both;
+  --animate-munch: munch 0.32s ease-in-out 3;
+  --animate-pop: pop 0.5s var(--ease-out-soft) both;
+  --animate-toss: toss 0.75s cubic-bezier(0.3, 0.7, 0.4, 1) both;
+  --animate-ring: ring 0.9s var(--ease-out-soft) both;
+  --animate-burst: burst 0.9s var(--ease-out-soft) both;
+  /* Handmade art: a kite on a breeze, a crib mobile, a drifting cloud, a line inked in once. */
+  --animate-sway: sway 4.2s ease-in-out infinite;
+  --animate-sway-slow: sway 7s ease-in-out infinite;
+  --animate-drift: drift 9s ease-in-out infinite;
+  --animate-draw: draw 1.1s var(--ease-out-soft) 0.3s both;
+  --animate-crumb: crumb 1.1s cubic-bezier(0.4, 0, 0.7, 1) 0.15s 2 both;
+  --animate-hop: hop 0.8s var(--ease-bounce) 2 both;
+  /* Storybook pages turning forward / back. */
+  --animate-page-next: page-next 0.55s var(--ease-out-soft) both;
+  --animate-page-prev: page-prev 0.55s var(--ease-out-soft) both;
+
+  @keyframes breathe {
+    0%,
+    100% {
+      transform: translateY(0) scale(1);
+    }
+    50% {
+      transform: translateY(-5px) scale(1.015);
+    }
+  }
+  @keyframes flicker {
+    0%,
+    100% {
+      transform: scale(1, 1) rotate(0deg);
+    }
+    30% {
+      transform: scale(0.96, 1.06) rotate(-2deg);
+    }
+    60% {
+      transform: scale(1.04, 0.95) rotate(2deg);
+    }
+  }
+  @keyframes pop {
+    0% {
+      opacity: 0;
+      transform: scale(0.6) translateY(10px);
+    }
+    60% {
+      opacity: 1;
+      transform: scale(1.06);
+    }
+    100% {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes twinkle {
+    0%,
+    100% {
+      opacity: 0.25;
+      transform: scale(0.85);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes wobble {
+    0%,
+    100% {
+      transform: rotate(0deg);
+    }
+    20% {
+      transform: rotate(-7deg) scale(1.03);
+    }
+    45% {
+      transform: rotate(5deg);
+    }
+    70% {
+      transform: rotate(-2deg);
+    }
+  }
+  @keyframes bounce-soft {
+    0% {
+      transform: scale(0.85, 1.12);
+    }
+    40% {
+      transform: scale(1.08, 0.92);
+    }
+    70% {
+      transform: scale(0.97, 1.03);
+    }
+    100% {
+      transform: none;
+    }
+  }
+  @keyframes bob {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-4px);
+    }
+  }
+  /* Hearts drift up and sideways by --dx, then fade. */
+  @keyframes float-heart {
+    0% {
+      opacity: 0;
+      transform: translate(0, 0) scale(0.5);
+    }
+    20% {
+      opacity: 1;
+      transform: translate(calc(var(--dx, 0px) * 0.3), -14px) scale(1.1);
+    }
+    100% {
+      opacity: 0;
+      transform: translate(var(--dx, 0px), -72px) scale(0.9);
+    }
+  }
+  @keyframes munch {
+    0%,
+    100% {
+      transform: scale(1, 1);
+    }
+    50% {
+      transform: scale(1.06, 0.9) translateY(3px);
+    }
+  }
+  /* The star charm: an arc from below (--from-x/--from-y) into the target, with a spin. */
+  @keyframes toss {
+    0% {
+      opacity: 0;
+      transform: translate(var(--from-x, 0px), var(--from-y, 160px)) rotate(-200deg) scale(0.7);
+    }
+    15% {
+      opacity: 1;
+    }
+    55% {
+      transform: translate(calc(var(--from-x, 0px) * 0.35), -40px) rotate(-40deg) scale(1.1);
+    }
+    100% {
+      opacity: 1;
+      transform: translate(0, 0) rotate(0deg) scale(0.9);
+    }
+  }
+  @keyframes ring {
+    0% {
+      opacity: 0.9;
+      transform: scale(0.4);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(1.6);
+    }
+  }
+  /* Sparkles fly out along --angle. */
+  @keyframes burst {
+    0% {
+      opacity: 0;
+      transform: rotate(var(--angle, 0deg)) translateY(0) scale(0.4);
+    }
+    25% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+      transform: rotate(var(--angle, 0deg)) translateY(-78px) scale(1);
+    }
+  }
+  @keyframes sway {
+    0%,
+    100% {
+      transform: rotate(-4deg);
+    }
+    50% {
+      transform: rotate(4deg);
+    }
+  }
+  @keyframes drift {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    50% {
+      transform: translateX(10px);
+    }
+  }
+  @keyframes draw {
+    from {
+      stroke-dashoffset: 1;
+    }
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+  /* Crumbs tumble down and fade. */
+  @keyframes crumb {
+    0% {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+    20% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(14px) rotate(8deg);
+    }
+  }
+  /* A ball hops beside the creature. */
+  @keyframes hop {
+    0%,
+    100% {
+      transform: translateY(0) rotate(0deg);
+    }
+    45% {
+      transform: translateY(-22px) rotate(120deg);
+    }
+  }
+  @keyframes page-next {
+    from {
+      opacity: 0;
+      transform: perspective(1400px) rotateY(-14deg) translateX(28px);
+      transform-origin: left center;
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes page-prev {
+    from {
+      opacity: 0;
+      transform: perspective(1400px) rotateY(14deg) translateX(-28px);
+      transform-origin: right center;
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
 }
 
-body {
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased;
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html {
+    color-scheme: light dark;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01";
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--primary) 22%, transparent);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+}
+
+/* Sticker card: paper-white edge, short drop, bubbly corners. */
+@utility sticker {
+  border-radius: var(--radius-bubble);
+  background-color: var(--card);
+  box-shadow: var(--shadow-sticker);
+}
+
+/* Squish on press — a soft, toy-like squash. */
+@utility squish {
+  transition: transform 0.18s var(--ease-out-soft);
+  &:active:not(:disabled) {
+    transform: scale(1.04, 0.92);
+  }
+}
+
+/* Chunky toy button: a solid lip underneath that you press into. */
+@utility chunky {
+  box-shadow: 0 4px 0 color-mix(in oklch, currentColor 28%, transparent), inset 0 1px 0 oklch(1 0 0 / 0.35);
+  transition:
+    transform 0.12s var(--ease-out-soft),
+    box-shadow 0.12s var(--ease-out-soft);
+  &:active:not(:disabled) {
+    transform: translateY(3px) scale(1.03, 0.96);
+    box-shadow: 0 1px 0 color-mix(in oklch, currentColor 28%, transparent), inset 0 1px 0 oklch(1 0 0 / 0.35);
+  }
+}
+
+/* A dotted LCD grain. */
+@utility lcd-grain {
+  background-image: radial-gradient(color-mix(in oklch, var(--lcd-ink) 9%, transparent) 0.6px, transparent 0.7px);
+  background-size: 4px 4px;
+}
+
+/*
+ * Scroll reveal for story chapters. Nothing is hidden until JS marks it "hidden" (only for things
+ * below the fold), so the page reads fine without JS; reduced motion never hides anything.
+ */
+[data-reveal] {
+  transition:
+    opacity 0.8s var(--ease-out-soft),
+    transform 0.8s var(--ease-out-soft);
+  transition-delay: var(--reveal-delay, 0s);
+}
+[data-reveal="hidden"] {
+  opacity: 0;
+  transform: translateY(22px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal="hidden"] {
+    opacity: 1;
+    transform: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

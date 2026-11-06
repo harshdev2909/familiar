@@ -1,18 +1,50 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createWriteStream, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createServer } from "node:net";
 import type { TestProject } from "vitest/node";
+
+/** Ask the OS for a free port, so a stale fork from an interrupted run can never be reused. */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const port = (srv.address() as { port: number }).port;
+      srv.close(() => resolve(port));
+    });
+  });
+}
 
 /**
  * Integration global setup: anvil forks of Sepolia (ENSv2 + our registry), Base (USDC, W0G pool,
  * our Feeder) and 0G mainnet (our FamiliarLog). Everything onchain is the real deployed state;
  * transactions only ever touch the local forks.
  */
+// Several upstreams per chain: the first that answers is forked (public RPCs go down).
 const FORKS = [
-  { key: "SEPOLIA_RPC", port: 8645, url: process.env.FORK_SEPOLIA ?? "https://sepolia.gateway.tenderly.co" },
-  { key: "BASE_RPC", port: 8646, url: process.env.FORK_BASE ?? "https://base-rpc.publicnode.com" },
-  { key: "ZG_RPC", port: 8647, url: process.env.FORK_ZG ?? "https://evmrpc.0g.ai" },
+  { key: "SEPOLIA_RPC", urls: [process.env.FORK_SEPOLIA, "https://sepolia.gateway.tenderly.co", "https://ethereum-sepolia-rpc.publicnode.com", "https://0xrpc.io/sep", "https://1rpc.io/sepolia"] },
+  { key: "BASE_RPC", urls: [process.env.FORK_BASE, "https://base-rpc.publicnode.com", "https://mainnet.base.org", "https://1rpc.io/base"] },
+  { key: "ZG_RPC", urls: [process.env.FORK_ZG, "https://evmrpc.0g.ai"] },
 ] as const;
+
+async function firstLive(urls: readonly (string | undefined)[]): Promise<string> {
+  for (const url of urls) {
+    if (!url) continue;
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }),
+        signal: AbortSignal.timeout(6000),
+      });
+      if (r.ok && (await r.json()).result) return url;
+    } catch {
+      /* try the next one */
+    }
+  }
+  throw new Error(`no reachable upstream RPC among ${urls.filter(Boolean).join(", ")}`);
+}
 
 declare module "vitest" {
   export interface ProvidedContext {
@@ -73,19 +105,21 @@ export default async function setup(project: TestProject) {
   const procs: ChildProcess[] = [];
   const rpcs = {} as Record<(typeof FORKS)[number]["key"], string>;
   for (const f of FORKS) {
+    const url = await firstLive(f.urls);
+    const port = await freePort();
     const logDir = process.env.ANVIL_LOG_DIR;
     // Interval mining like a real chain: viem re-checks receipts on new blocks, and automine never
     // produces one after the tx block (a receipt check that races the mining would wait forever).
-    const args = ["--fork-url", f.url, "--port", String(f.port), "--block-time", "1", "--no-rate-limit", "--retries", "10", "--fork-retry-backoff", "500", "--timeout", "60000"];
+    const args = ["--fork-url", url, "--port", String(port), "--block-time", "1", "--no-rate-limit", "--retries", "10", "--fork-retry-backoff", "500", "--timeout", "60000"];
     const p = spawn("anvil", logDir ? args : [...args, "--silent"], { stdio: logDir ? ["ignore", "pipe", "pipe"] : "ignore" });
     if (logDir) {
       mkdirSync(logDir, { recursive: true });
-      const out = createWriteStream(`${logDir}/anvil-${f.port}.log`);
+      const out = createWriteStream(`${logDir}/anvil-${f.key}.log`);
       p.stdout?.pipe(out);
       p.stderr?.pipe(out);
     }
     procs.push(p);
-    rpcs[f.key] = `http://127.0.0.1:${f.port}`;
+    rpcs[f.key] = `http://127.0.0.1:${port}`;
   }
   await Promise.all(Object.values(rpcs).map(waitFor));
   const env = loadContractsEnv();
@@ -93,5 +127,9 @@ export default async function setup(project: TestProject) {
   await warm(rpcs, env.AGENT_PRIVATE_KEY);
   project.provide("rpcs", rpcs);
   project.provide("agentKey", env.AGENT_PRIVATE_KEY);
-  return () => procs.forEach((p) => p.kill("SIGTERM"));
+  const stop = () => procs.forEach((p) => p.kill("SIGTERM"));
+  // Kill the forks even if the run is interrupted.
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  return stop;
 }

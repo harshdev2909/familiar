@@ -14,7 +14,9 @@ import {
   getAddress,
   http,
 } from "viem";
-import { nonceManager, privateKeyToAccount } from "viem/accounts";
+import { privateKeyToAccount } from "viem/accounts";
+import { sql } from "drizzle-orm";
+import { db, schema } from "../db/client";
 import { base, sepolia } from "viem/chains";
 import { defineChain } from "viem";
 import { env } from "../env";
@@ -55,14 +57,14 @@ let agentAccount: Account | undefined;
 let operatorAccount: Account | undefined;
 
 export function agent(): Account {
-  agentAccount ??= privateKeyToAccount(env().AGENT_PRIVATE_KEY as Hash, { nonceManager });
+  agentAccount ??= privateKeyToAccount(env().AGENT_PRIVATE_KEY as Hash);
   return agentAccount;
 }
 
 export function operator(): Account {
   const pk = env().OPERATOR_PRIVATE_KEY;
   if (!pk || pk.toLowerCase() === env().AGENT_PRIVATE_KEY.toLowerCase()) return agent();
-  operatorAccount ??= privateKeyToAccount(pk as Hash, { nonceManager });
+  operatorAccount ??= privateKeyToAccount(pk as Hash);
   return operatorAccount;
 }
 
@@ -93,18 +95,38 @@ export const EXTERNAL = {
 } as const;
 
 // ---------------------------------------------------------------------------------------------
-// Serialized writes: one queue per (chain, account) so concurrent requests never race nonces
-// inside an instance; viem's nonceManager tracks pending nonces, and "nonce too low" is retried
-// with a fresh nonce for the multi-instance case.
+// Writes. Within an instance, sends from one (chain, account) are queued. Across instances, the
+// nonce is assigned under a Postgres advisory lock: nonce = max(node's pending count, last nonce we
+// handed out + 1), where the stored value is trusted only briefly so a dropped tx can't wedge the
+// queue. "nonce too low"-style races are retried with a fresh nonce.
 // ---------------------------------------------------------------------------------------------
 
 const queues = new Map<string, Promise<unknown>>();
+const STORED_NONCE_TTL_MS = 60_000;
 
 function serialize<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = queues.get(key) ?? Promise.resolve();
   const next = prev.then(fn, fn);
   queues.set(key, next.catch(() => undefined));
   return next;
+}
+
+/** Assign a nonce and broadcast while holding a cross-instance lock for (chain, account). */
+async function sendLocked(key: string, pc: PublicClient, address: Address, send: (nonce: number) => Promise<Hash>): Promise<Hash> {
+  const d = await db();
+  return d.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${key}))`);
+    const pending = await pc.getTransactionCount({ address, blockTag: "pending" });
+    const [row] = await tx.select().from(schema.txNonces).where(sql`${schema.txNonces.key} = ${key}`);
+    const fresh = row && Date.now() - row.updatedAt.getTime() < STORED_NONCE_TTL_MS;
+    const nonce = fresh ? Math.max(pending, row.nonce + 1) : pending;
+    const hash = await send(nonce);
+    await tx
+      .insert(schema.txNonces)
+      .values({ key, nonce, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: schema.txNonces.key, set: { nonce, updatedAt: new Date() } });
+    return hash;
+  });
 }
 
 export interface WriteArgs {
@@ -120,7 +142,8 @@ export interface WriteArgs {
 
 /** Simulate, send, and wait for a successful receipt. Reverts become AppError with the decoded reason. */
 export async function write(w: WriteArgs): Promise<TransactionReceipt> {
-  return serialize(`${w.chain}:${w.account.address}`, async () => {
+  const key = `${w.chain}:${w.account.address.toLowerCase()}`;
+  return serialize(key, async () => {
     const pc = publicClient(w.chain);
     const wallet = createWalletClient({ account: w.account, chain: CHAINS[w.chain], transport: http(rpc(w.chain), { retryCount: 2, timeout: 30_000 }) });
     for (let attempt = 1; ; attempt++) {
@@ -134,7 +157,9 @@ export async function write(w: WriteArgs): Promise<TransactionReceipt> {
         });
         // Amsterdam (Sepolia) reprices state creation; pad the node's estimate.
         const gas = await pc.estimateContractGas({ ...(request as object), account: w.account } as never);
-        const hash = await wallet.writeContract({ ...(request as object), gas: (gas * 13n) / 10n } as never);
+        const hash = await sendLocked(key, pc, w.account.address, (nonce) =>
+          wallet.writeContract({ ...(request as object), gas: (gas * 13n) / 10n, nonce } as never),
+        );
         const receipt = await pc.waitForTransactionReceipt({ hash, timeout: env().TX_RECEIPT_TIMEOUT_MS, retryCount: 10 });
         if (receipt.status !== "success") throw new AppError("UPSTREAM_CHAIN", `${w.label} reverted onchain`, { hash });
         log.info("tx", { chain: w.chain, label: w.label, hash, gasUsed: receipt.gasUsed });
@@ -142,14 +167,27 @@ export async function write(w: WriteArgs): Promise<TransactionReceipt> {
       } catch (e) {
         if (e instanceof AppError) throw e;
         const msg = e instanceof Error ? e.message : String(e);
-        if (attempt < 3 && /nonce too low|replacement transaction underpriced|already known/i.test(msg)) {
-          w.account.nonceManager?.reset({ address: w.account.address, chainId: CHAINS[w.chain].id });
+        if (attempt < 4 && /nonce too low|nonce has already been used|replacement transaction underpriced|already known/i.test(msg)) {
+          await new Promise((r) => setTimeout(r, 750 * attempt));
           continue;
         }
         throw new AppError("UPSTREAM_CHAIN", `${w.label} failed: ${revertReason(e) ?? shortMessage(e)}`, undefined, { cause: e });
       }
     }
   });
+}
+
+/** Native gas balances of the agent/operator, for health checks and alerts. */
+export async function agentBalances() {
+  const a = agent().address;
+  const [sep, zg] = await Promise.all([publicClient("sepolia").getBalance({ address: a }), publicClient("zg").getBalance({ address: a })]);
+  const toEth = (v: bigint) => Number(v) / 1e18;
+  return {
+    address: a,
+    sepoliaEth: toEth(sep),
+    zg: toEth(zg),
+    low: toEth(sep) < env().AGENT_MIN_BALANCE_SEPOLIA || toEth(zg) < env().AGENT_MIN_BALANCE_ZG,
+  };
 }
 
 export function revertReason(e: unknown): string | undefined {

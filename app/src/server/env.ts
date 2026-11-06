@@ -39,6 +39,12 @@ const schema = z.object({
   /** Ask the router to verify the provider TEE signature on every call. */
   ZG_VERIFY_TEE: z.stringbool().default(true),
   ZG_IMAGE_SIZE: z.string().default("1024x1024"),
+  /** Spoken reply (text-to-speech of the Familiar's line). */
+  ZG_TTS_ENABLED: z.stringbool().default(true),
+  ZG_MODEL_TTS: z.string().default("minimax-speech-2.8-turbo"),
+  ZG_TTS_VOICE: z.string().default("English_Graceful_Lady"),
+  /** Evolution clip resolution: 480p keeps a 5 s clip around $0.25. */
+  ZG_VIDEO_RESOLUTION: z.enum(["480p", "720p"]).default("480p"),
 
   // 0G Storage (encrypted memory). Disabled = memory blob kept only in the DB (still encrypted).
   ZG_STORAGE_ENABLED: z.stringbool().default(false),
@@ -57,12 +63,30 @@ const schema = z.object({
 
   // Media
   BLOB_READ_WRITE_TOKEN: z.string().optional(),
+  /** Serve media from local disk even in production (single-machine deployments and live testing). */
+  ALLOW_LOCAL_MEDIA: z.stringbool().default(false),
+  /** Where local media lives (e.g. a mounted volume on a long-running host). */
+  MEDIA_DIR: z.string().optional(),
 
   // Product rules
   /** Max visits per Familiar per UTC day. */
   VISITS_PER_DAY: z.coerce.number().int().min(1).default(1),
-  /** Comma-separated labels exempt from the daily limit (seeded demo Familiar). */
+  /** Comma-separated labels that are free and exempt from the daily limit (a seeded demo Familiar). */
   DEMO_LABELS: z.string().default(""),
+  /** Enables POST /api/auth/demo: a signature-less session for the owner of the first demo label. */
+  DEMO_LOGIN_ENABLED: z.stringbool().default(false),
+  /** Seasonal event: "auto" follows the calendar; "diwali" or "none" force it. */
+  FESTIVAL: z.enum(["auto", "diwali", "none"]).default("auto"),
+  /** Pretend today is this UTC date (YYYY-MM-DD) for event spotlights, bonuses and event quests. */
+  EVENTS_TODAY: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "expected YYYY-MM-DD")
+    .optional(),
+  /** Free hatches (team-paid) allowed per UTC day across all users; 0G sign-in hatches are not capped. */
+  FREE_HATCHES_PER_DAY: z.coerce.number().int().min(0).default(50),
+  /** Warn in /api/health and logs when the agent's gas balance falls below this (ether units). */
+  AGENT_MIN_BALANCE_SEPOLIA: z.coerce.number().default(0.01),
+  AGENT_MIN_BALANCE_ZG: z.coerce.number().default(0.1),
 
   CRON_SECRET: z.string().min(16).optional(),
 });

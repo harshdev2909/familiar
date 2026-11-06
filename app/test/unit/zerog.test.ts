@@ -81,3 +81,34 @@ describe("ZeroGRouter", () => {
     expect(JSON.parse(init.body as string)).toEqual({ token: "privy-token" });
   });
 });
+
+describe("ZeroGRouter: speech and video", () => {
+  it("speech returns MP3 bytes with the UUID request id from the duplicated header", async () => {
+    const mp3 = Buffer.from("ID3fakeaudio");
+    const f = vi.fn(async () => new Response(mp3, { status: 200, headers: { "content-type": "audio/mpeg", "x-request-id": "4c02d726dd3e758e, f960ca95-09f1-44b3-a115-f74b9c8a3078" } }));
+    const { bytes, receipt } = await new ZeroGRouter({ token: "t", fetch: f as never }).speech("hello");
+    expect(Buffer.from(bytes)).toEqual(mp3);
+    expect(receipt).toMatchObject({ step: "speak", model: "minimax-speech-2.8-turbo", requestId: "f960ca95-09f1-44b3-a115-f74b9c8a3078", teeVerified: null });
+  });
+
+  it("polls video through queued → in_progress → completed and records the billed async id", async () => {
+    const r = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(r({ status: "queued" }))
+      .mockResolvedValueOnce(r({ status: "in_progress", progress: 50 }))
+      .mockResolvedValueOnce(r({ status: "completed", x_0g_trace: { request_id: "async-abc", billing: { total_cost: "217280", currency: "usd" } } }))
+      .mockResolvedValueOnce(new Response(Buffer.from("mp4bytes"), { status: 200, headers: { "content-type": "video/mp4" } }));
+    const router = new ZeroGRouter({ token: "t", fetch: f as never });
+    expect(await router.pollVideo("job1")).toEqual({ status: "pending" });
+    expect(await router.pollVideo("job1")).toEqual({ status: "pending" });
+    const done = await router.pollVideo("job1");
+    expect(done).toMatchObject({ status: "done", billedRequestId: "async-abc", cost: "217280", costCurrency: "usd" });
+    expect((f.mock.calls[3] as unknown as [string])[0]).toContain("/videos/job1/content");
+  });
+
+  it("reports failed jobs", async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ status: "failed", error: { message: "content policy" } }), { status: 200 }));
+    expect(await new ZeroGRouter({ token: "t", fetch: f as never }).pollVideo("j")).toEqual({ status: "failed", error: "content policy" });
+  });
+});

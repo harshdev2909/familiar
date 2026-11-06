@@ -26,7 +26,7 @@ export function route<C = unknown>(fn: (req: Request, ctx: C) => Promise<Respons
     log.info("http", {
       requestId,
       method: req.method,
-      path: new URL(req.url).pathname,
+      path: safePath(req),
       status: res.status,
       ms: Math.round(performance.now() - started),
     });
@@ -48,9 +48,12 @@ function errorResponse(e: unknown, requestId: string, req: Request): Response {
       { status: e.status },
     );
   }
-  log.error("unhandled", { requestId, path: new URL(req.url).pathname, error: describe(e) });
+  log.error("unhandled", { requestId, path: safePath(req), error: describe(e) });
   return Response.json({ error: { code: "INTERNAL", message: "Internal error", requestId } }, { status: 500 });
 }
+
+/** Request path for logs, with personal keys (`/api/mcp/fam_…`) masked. */
+const safePath = (req: Request) => new URL(req.url).pathname.replace(/fam_[0-9A-Za-z]+/g, "fam_…");
 
 const describe = (e: unknown) => (e instanceof Error ? { name: e.name, message: e.message, stack: e.stack } : e);
 
@@ -73,8 +76,23 @@ export function query<T extends z.ZodType>(req: Request, schema: T): z.infer<T> 
 export const MAX_AUDIO_BYTES = 4 * 1024 * 1024; // Vercel request bodies cap at 4.5 MB
 const AUDIO_TYPES = new Set(["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav", "audio/x-wav", "audio/m4a", "audio/x-m4a"]);
 
-/** Read a multipart form with an `audio` file plus string fields. */
-export async function audioForm(req: Request): Promise<{ audio: File; fields: Record<string, string> }> {
+const TextBody = z.object({ text: z.string().max(4000) });
+
+/**
+ * Read what the human said: multipart/form-data with an `audio` file or a `text` field (plus string
+ * fields), or — when `allowJson` — a JSON body `{ text }`. Exactly-one validation is the service's.
+ * An empty body yields neither (wake allows that).
+ */
+export async function saidForm(req: Request, opts: { allowJson?: boolean } = {}): Promise<{ audio?: File; text?: string; fields: Record<string, string> }> {
+  const ct = req.headers.get("content-type") ?? "";
+  if (opts.allowJson && ct.includes("application/json")) {
+    const { text } = await json(req, TextBody);
+    return { text, fields: {} };
+  }
+  if (!ct.startsWith("multipart/form-data")) {
+    if (!req.body) return { fields: {} };
+    throw new AppError("BAD_REQUEST", opts.allowJson ? "Expected multipart/form-data or JSON { text }" : "Expected multipart/form-data");
+  }
   const len = Number(req.headers.get("content-length") ?? 0);
   if (len > MAX_AUDIO_BYTES + 64 * 1024) throw new AppError("PAYLOAD_TOO_LARGE", "Voice note is too large (max 4 MB)");
   let form: FormData;
@@ -84,14 +102,14 @@ export async function audioForm(req: Request): Promise<{ audio: File; fields: Re
     throw new AppError("BAD_REQUEST", "Expected multipart/form-data");
   }
   const audio = form.get("audio");
-  if (!(audio instanceof File)) throw new AppError("BAD_REQUEST", "Missing `audio` file field");
+  const fields: Record<string, string> = {};
+  for (const [k, v] of form.entries()) if (typeof v === "string") fields[k] = v;
+  if (!(audio instanceof File)) return { text: fields.text, fields };
   if (audio.size === 0) throw new AppError("BAD_REQUEST", "Voice note is empty");
   if (audio.size > MAX_AUDIO_BYTES) throw new AppError("PAYLOAD_TOO_LARGE", "Voice note is too large (max 4 MB)");
   const base = audio.type.split(";")[0]!.trim();
   if (!AUDIO_TYPES.has(base)) throw new AppError("UNSUPPORTED_MEDIA", `Unsupported audio type: ${audio.type || "unknown"}`);
-  const fields: Record<string, string> = {};
-  for (const [k, v] of form.entries()) if (typeof v === "string") fields[k] = v;
-  return { audio, fields };
+  return { audio, text: fields.text, fields };
 }
 
 export const clientIp = (req: Request) =>

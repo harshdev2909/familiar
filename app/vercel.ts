@@ -1,8 +1,9 @@
 import type { VercelConfig } from "@vercel/config/v1";
 
+/**
+ * Frontend on Vercel. When BACKEND_URL is set (next.config.ts), every /api/* request is proxied to
+ * the API server on Railway, which also runs the reconcile job in-process (INTERNAL_CRON).
+ */
 export const config: VercelConfig = {
   framework: "nextjs",
-  // Retries onchain writes left pending by a failed/crashed request and polls evolution clips.
-  // Sub-daily schedules need a Pro plan; on Hobby use "0 0 * * *".
-  crons: [{ path: "/api/cron/reconcile", schedule: "*/5 * * * *" }],
 };

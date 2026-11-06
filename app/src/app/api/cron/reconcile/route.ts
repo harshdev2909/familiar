@@ -1,9 +1,11 @@
 import { and, eq, lt, sql } from "drizzle-orm";
+import { agentBalances } from "@/server/chain/clients";
 import { db, schema } from "@/server/db/client";
 import { env } from "@/server/env";
 import { AppError } from "@/server/errors";
 import { finalizeChain, pollEvolution } from "@/server/familiar/service";
 import { route } from "@/server/http";
+import { log } from "@/server/log";
 
 export const maxDuration = 300;
 
@@ -26,5 +28,7 @@ export const GET = route(async (req) => {
   for (const v of clips) await pollEvolution(v.id).catch(() => undefined);
   await d.delete(schema.authNonces).where(lt(schema.authNonces.expiresAt, new Date()));
   await d.delete(schema.feedQuotes).where(lt(schema.feedQuotes.expiresAt, sql`now() - interval '1 day'`));
-  return { finalized, clipsPolled: clips.length };
+  const agent = await agentBalances().catch(() => null);
+  if (agent?.low) log.error("agent_balance_low", agent);
+  return { finalized, clipsPolled: clips.length, agent };
 });
