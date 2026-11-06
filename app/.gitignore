@@ -57,3 +57,6 @@ CLAUDE.md
 
 # local e2e fixtures
 /public/__e2e/
+
+# demo media shipped to the API server only (not committed)
+/seed-media/

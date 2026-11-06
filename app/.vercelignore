@@ -1,0 +1,9 @@
+.env
+.env.local
+.env*.local
+.data
+.next
+node_modules
+test
+tsconfig.tsbuildinfo
+seed-media

@@ -17,6 +17,8 @@ const backendUrl = process.env.BACKEND_URL?.replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Production builds type-check the app only; tests (which import contract artifacts) run under `pnpm typecheck`.
+  typescript: { tsconfigPath: "tsconfig.build.json" },
   async rewrites() {
     return backendUrl ? { beforeFiles: [{ source: "/api/:path*", destination: `${backendUrl}/api/:path*` }], afterFiles: [], fallback: [] } : [];
   },

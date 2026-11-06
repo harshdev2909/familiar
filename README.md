@@ -323,8 +323,11 @@ The app is one Next.js codebase, deployed twice:
 - **Frontend on Vercel.** With `BACKEND_URL` set to the Railway URL, every `/api/*` request is rewritten to the API server. The browser only ever talks to one origin, so session cookies, SIWE domains and connector links all keep working.
 
 ```bash
-# API
+cd app
+# API (railway.json: build + start + health check; volume mounted at /data)
 railway up --service familiar-api
-# Frontend
+# Frontend (BACKEND_URL, APP_URL, NEXT_PUBLIC_* set in the Vercel project)
 vercel deploy --prod
 ```
+
+Production builds type-check the app through `tsconfig.build.json`; the tests are type-checked by `pnpm typecheck`.
