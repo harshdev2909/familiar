@@ -2,6 +2,8 @@
 
 **A private AI creature you talk to for 60 seconds each night.**
 
+**Live:** [familiar-zeta.vercel.app](https://familiar-zeta.vercel.app)
+
 Every evening you hold the mic and tell your Familiar about your day. It listens, remembers, answers with one warm line (spoken aloud in its own voice), and draws a new portrait of itself shaped by your mood and the things you mentioned. It only changes when you visit. Visit every night and it grows. Stop visiting for a week and it falls asleep.
 
 Your voice note is transcribed inside a trusted execution environment and never stored. The Familiar keeps only an encrypted memory of who you are. Each Familiar is also a real onchain name, like `ember.familiar.eth`, whose avatar and mood update after every visit.
