@@ -30,6 +30,9 @@ export const GET = route<P<{ key: string[] }>>(async (req, { params }) => {
     "access-control-allow-origin": "*",
     "cross-origin-resource-policy": "cross-origin",
     "accept-ranges": "bytes",
+    // Audio/video must reach this handler for byte ranges (Safari): keep them out of the proxy CDN's cache,
+    // which would answer ranges with the full 200 body. Browsers still cache them via cache-control.
+    ...(ext === "mp3" || ext === "mp4" ? { "vercel-cdn-cache-control": "no-store", "cdn-cache-control": "no-store" } : {}),
   };
   const total = bytes.byteLength;
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get("range") ?? "");
