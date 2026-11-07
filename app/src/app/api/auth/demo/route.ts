@@ -17,7 +17,7 @@ export const POST = route(async (req) => {
   if (!env().DEMO_LOGIN_ENABLED || !label) throw new AppError("NOT_FOUND", "Demo is not enabled");
   const onchain = await readFamiliar(label);
   if (!onchain.exists) throw new AppError("NOT_FOUND", "Demo Familiar is not set up");
-  const token = await issueSession({ address: onchain.bondedOwner, method: "wallet" });
+  const token = await issueSession({ address: onchain.bondedOwner, method: "wallet", demo: true });
   return Response.json(
     { session: { address: onchain.bondedOwner, method: "wallet" }, familiar: await familiarOf(onchain.bondedOwner), demo: label },
     { headers: { "set-cookie": sessionCookie(token) } },

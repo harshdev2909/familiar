@@ -34,7 +34,7 @@ import { EmberIcon } from "@/components/art/Icons";
 import { SpeechBubble, TulsiPlant } from "@/components/art/Handmade";
 import Image from "next/image";
 import Link from "next/link";
-import { hms, useCountdown, useRecorder, useVisitPoll } from "@/lib/hooks";
+import { hms, useCountdown, useRecorder, useVisitPoll, useScrollToHash } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
 
 type Phase = "idle" | "working" | "revealed";
@@ -92,6 +92,7 @@ export function FamiliarScreen({ params }: { params: Promise<{ name: string }> }
   const [waking, setWaking] = useState(false);
   const lantern = useLanternNight();
 
+  useScrollToHash();
   const fq = useQuery({ queryKey: ["familiar", name], queryFn: () => api.familiar(name), retry: (n, e) => !isApiError(e, "NOT_FOUND") && n < 2 });
   const familiar = fq.data?.familiar ?? null;
   const isOwner = Boolean(session && familiar && session.address.toLowerCase() === familiar.owner);

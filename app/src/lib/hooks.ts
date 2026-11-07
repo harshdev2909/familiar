@@ -156,3 +156,26 @@ export function useVisitPoll(initial: VisitView | null, onUpdate?: (v: VisitView
   }, [visit, onUpdate]);
   return visit;
 }
+
+/**
+ * Deep links like `/f/luma#diary` point at sections that only render once data has loaded, so the
+ * browser's own jump misses them. Wait (up to 6 s) for the target to appear, then scroll to it once.
+ */
+export function useScrollToHash() {
+  useEffect(() => {
+    const id = decodeURIComponent(window.location.hash.slice(1));
+    if (!id) return;
+    const started = Date.now();
+    const timer = window.setInterval(() => {
+      const el = document.getElementById(id);
+      if (el) {
+        window.clearInterval(timer);
+        const smooth = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        el.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
+      } else if (Date.now() - started > 6000) {
+        window.clearInterval(timer);
+      }
+    }, 150);
+    return () => window.clearInterval(timer);
+  }, []);
+}

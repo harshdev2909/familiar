@@ -1,4 +1,5 @@
 import "server-only";
+import { forbidDemo } from "./session";
 import { createHash, randomBytes } from "node:crypto";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { getAddress } from "viem";
@@ -67,6 +68,7 @@ export async function listKeys(session: Session) {
 }
 
 export async function createKey(session: Session, label: string) {
+  forbidDemo(session, "create connector links");
   assertCanManage(session);
   const owner = session.address.toLowerCase();
   const key = generateKey();
@@ -90,6 +92,7 @@ export async function createKey(session: Session, label: string) {
 }
 
 export async function revokeKey(session: Session, id: string) {
+  forbidDemo(session, "revoke connector links");
   assertCanManage(session);
   const d = await db();
   const [row] = await d

@@ -88,8 +88,14 @@ export async function buy(session: Session, itemId: string) {
       .where(and(eq(schema.familiars.id, f.id), gte(schema.familiars.sparks, item.price)))
       .returning({ sparks: schema.familiars.sparks });
     if (!paid) throw new AppError("PAYMENT_REQUIRED", `Not enough Sparks — ${item.name} costs ${item.price}`, { price: item.price, sparks: f.sparks });
-    await tx.insert(schema.inventory).values({ familiarId: f.id, itemId: item.id, source: "shop" });
-    await tx.insert(schema.sparkLedger).values({ familiarId: f.id, delta: -item.price, reason: `buy:${item.id}`, ref: `buy:${f.id}:${item.id}` });
+    // Items can leave via trades and be bought again, so the ledger ref is per inventory row, not per item.
+    const [row] = await tx
+      .insert(schema.inventory)
+      .values({ familiarId: f.id, itemId: item.id, source: "shop" })
+      .onConflictDoNothing()
+      .returning({ id: schema.inventory.id });
+    if (!row) throw new AppError("CONFLICT", `${f.label} already has the ${item.name.toLowerCase()}`);
+    await tx.insert(schema.sparkLedger).values({ familiarId: f.id, delta: -item.price, reason: `buy:${item.id}`, ref: `buy:${f.id}:${row.id}` });
     log.info("shop_buy", { label: f.label, item: item.id, price: item.price });
     return { item: item.id, sparks: paid.sparks };
   });
@@ -98,18 +104,24 @@ export async function buy(session: Session, itemId: string) {
 /** Put an owned item on (replacing whatever is in its slot), or take a slot off with itemId = null. */
 export async function equip(session: Session, label: string, slot: Slot, itemId: string | null) {
   const f = await ownedFamiliar(session, label);
-  const d = await db();
   if (itemId) {
     const item = itemById(itemId);
     if (!item || item.slot !== slot) throw new AppError("BAD_REQUEST", "That item doesn't go there");
-    const [mine] = await d.select({ id: schema.inventory.id }).from(schema.inventory).where(and(eq(schema.inventory.familiarId, f.id), eq(schema.inventory.itemId, itemId)));
-    if (!mine) throw new AppError("FORBIDDEN", "Buy it first");
   }
-  const next = { ...(f.equipped ?? {}) };
-  if (itemId) next[slot] = itemId;
-  else delete next[slot];
-  await d.update(schema.familiars).set({ equipped: next, updatedAt: new Date() }).where(eq(schema.familiars.id, f.id));
-  return { equipped: next };
+  const d = await db();
+  // Lock the row (as trade-accept does) so a concurrent swap can't leave a traded-away item equipped.
+  return d.transaction(async (tx) => {
+    const [row] = await tx.select({ equipped: schema.familiars.equipped }).from(schema.familiars).where(eq(schema.familiars.id, f.id)).for("update");
+    if (itemId) {
+      const [mine] = await tx.select({ id: schema.inventory.id }).from(schema.inventory).where(and(eq(schema.inventory.familiarId, f.id), eq(schema.inventory.itemId, itemId)));
+      if (!mine) throw new AppError("FORBIDDEN", "Buy it first");
+    }
+    const next = { ...(row?.equipped ?? {}) };
+    if (itemId) next[slot] = itemId;
+    else delete next[slot];
+    await tx.update(schema.familiars).set({ equipped: next, updatedAt: new Date() }).where(eq(schema.familiars.id, f.id));
+    return { equipped: next };
+  });
 }
 
 /** The phrases for whatever the Familiar is wearing, for the portrait prompt. */
@@ -177,6 +189,28 @@ export interface BadgeView {
 
 /** First row's `n` of a count query (quest progress; the queries run in one parallel round). */
 const countOf = async (q: Promise<{ n: number }[]>) => Number((await q)[0]?.n ?? 0);
+
+/** Monday (UTC) of the ISO week containing `date` (YYYY-MM-DD). */
+export function mondayOf(date: string) {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+
+/** Longest run of consecutive UTC days in a set of YYYY-MM-DD dates. */
+export function longestRun(days: string[]) {
+  const sorted = [...new Set(days)].sort();
+  let best = 0;
+  let run = 0;
+  let prev = 0;
+  for (const day of sorted) {
+    const t = Date.parse(`${day}T00:00:00Z`);
+    run = run && t - prev === 86_400_000 ? run + 1 : 1;
+    best = Math.max(best, run);
+    prev = t;
+  }
+  return best;
+}
 
 async function questState(f: FamiliarRow) {
   const d = await db();
@@ -252,6 +286,13 @@ async function questState(f: FamiliarRow) {
   ]);
   const ownedSet = new Set(owned.map((r) => r.id));
   const festiveOwned = ITEMS.filter((i) => i.festival === fest?.id && ownedSet.has(i.id)).length;
+  // Weekly streak counts nights *this ISO week* (a stored streak never decays between visits).
+  const weekStart = mondayOf(today);
+  const weekDays = await d
+    .selectDistinct({ day: schema.visits.utcDate })
+    .from(schema.visits)
+    .where(and(eq(schema.visits.familiarId, f.id), gte(schema.visits.utcDate, weekStart), lte(schema.visits.utcDate, today), okVisit));
+  const weekRun = longestRun(weekDays.map((r) => r.day));
   const festiveWorn = Object.values(f.equipped ?? {}).some((id) => itemById(id)?.festival === fest?.id);
   const claimedKey = new Set(claims.map((c) => `${c.questId}@${c.period}`));
   const week = isoWeek(today);
@@ -263,7 +304,7 @@ async function questState(f: FamiliarRow) {
     { id: "daily-gift", kind: "daily", title: "A little gift", description: "Send a gift to a Familiar you've spotted.", progress: Math.min(giftsToday, 1), goal: 1, reward: 10, period: today },
     { id: "daily-care", kind: "daily", title: "Full care", description: `Pet, play with and feed ${f.label} a snack today.`, progress: caredToday, goal: 3, reward: 15, period: today },
     { id: "daily-walk", kind: "daily", title: "A night walk", description: "Host or join a night walk that gets painted today.", progress: Math.min(walksToday, 1), goal: 1, reward: 20, period: today },
-    { id: "weekly-streak", kind: "weekly", title: "Three nights in a row", description: "Visit three nights running.", progress: Math.min(f.streak, 3), goal: 3, reward: 40, period: week },
+    { id: "weekly-streak", kind: "weekly", title: "Three nights in a row", description: "Visit three nights running.", progress: Math.min(weekRun, 3), goal: 3, reward: 40, period: week },
   ];
   if (hackathon) {
     defs.push(

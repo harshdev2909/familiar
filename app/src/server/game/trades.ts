@@ -1,4 +1,5 @@
 import "server-only";
+import { forbidDemo } from "../auth/session";
 import { type SQL, and, count, desc, eq, gt, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Session } from "../auth/session";
@@ -131,6 +132,7 @@ async function holdings(conn: Pick<Awaited<ReturnType<typeof db>>, "select">, id
 }
 
 export async function createTrade(session: Session, input: { to: string; give: string; want: string }): Promise<{ trade: TradeView }> {
+  forbidDemo(session, "trade");
   const me = await myFamiliarRow(session);
   const them = await target(input.to, me);
   const give = itemById(input.give);
@@ -185,6 +187,7 @@ function wrongParty(tr: Pick<TradeRow, "fromFamiliarId" | "toFamiliarId">, meId:
  * holds the other's), move the two inventory rows across, take the items off if worn, and resolve.
  */
 export async function acceptTrade(session: Session, id: string): Promise<{ trade: TradeView }> {
+  forbidDemo(session, "trade");
   assertId(id);
   const me = await myFamiliarRow(session);
   await expireStale(eq(t.id, id));
@@ -227,6 +230,7 @@ export async function acceptTrade(session: Session, id: string): Promise<{ trade
 
 /** Decline (recipient) or cancel (sender) a pending offer. */
 export async function resolveTrade(session: Session, id: string, action: "decline" | "cancel"): Promise<{ trade: TradeView }> {
+  forbidDemo(session, "trade");
   assertId(id);
   const me = await myFamiliarRow(session);
   await expireStale(eq(t.id, id));

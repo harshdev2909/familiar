@@ -1,4 +1,5 @@
 import "server-only";
+import { forbidDemo } from "./auth/session";
 import { and, desc, eq, gt, inArray, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { WebPushError, sendNotification } from "web-push";
 import type { Session } from "./auth/session";
@@ -83,7 +84,7 @@ async function mapLimit<T, R>(xs: T[], limit: number, fn: (x: T) => Promise<R>):
 
 type SubRow = typeof schema.pushSubscriptions.$inferSelect;
 
-/** Send one payload to many subscriptions; drop the ones the push service says are gone (404/410). */
+/** Send one payload to many subscriptions; drop the ones the push service says are gone (404/410) or no longer ours (403: VAPID key changed). */
 async function deliver(jobs: { sub: SubRow; payload: PushPayload }[]) {
   if (!jobs.length) return { sent: 0, dropped: 0 };
   const results = await mapLimit(jobs, PUSH.concurrency, async ({ sub, payload }) => {
@@ -96,7 +97,7 @@ async function deliver(jobs: { sub: SubRow; payload: PushPayload }[]) {
   });
   const d = await db();
   const t = schema.pushSubscriptions;
-  const gone = results.filter((r) => r.code === 404 || r.code === 410).map((r) => r.sub.id);
+  const gone = results.filter((r) => r.code === 403 || r.code === 404 || r.code === 410).map((r) => r.sub.id);
   const ok = results.filter((r) => r.code >= 200 && r.code < 300).map((r) => r.sub.id);
   if (gone.length) await d.delete(t).where(inArray(t.id, gone));
   if (ok.length) await d.update(t).set({ lastSentAt: new Date() }).where(inArray(t.id, ok));
@@ -105,6 +106,7 @@ async function deliver(jobs: { sub: SubRow; payload: PushPayload }[]) {
 
 /** Save (or move to this owner) a browser's push subscription. Keeps the newest 10 per owner. */
 export async function subscribe(session: Session, input: { endpoint: string; keys: { p256dh: string; auth: string } }) {
+  forbidDemo(session, "turn on notifications");
   const owner = session.address.toLowerCase();
   const d = await db();
   const t = schema.pushSubscriptions;
@@ -186,6 +188,11 @@ export async function sendNeedPushes(now = new Date()) {
     })
     .from(f)
     .where(and(notRecently, gt(f.expiresAt, now), sql`${f.owner} in (select ${t.owner} from ${t})`))
+    // Most neglected first, so a large set of content Familiars can never crowd out the ones in need.
+    .orderBy(
+      sql`least(coalesce(${f.lastSnackAt}, ${f.lastVisitAt}, ${f.createdAt}), coalesce(greatest(${f.lastPetAt}, ${f.lastPlayAt}), ${f.lastVisitAt}, ${f.createdAt}))`,
+      f.id,
+    )
     .limit(PUSH.batch);
   const due = candidates.flatMap((c) => {
     const reason = pushReason(c, now);

@@ -148,11 +148,11 @@ export function EventStrip({ className }: { className?: string }) {
           <li key={e.id} className="flex min-w-[17rem] max-w-sm flex-1 items-center gap-3 rounded-bubble border border-border bg-card p-3 shadow-soft">
             <EventLogo event={e} size="sm" />
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <p className="truncate text-sm font-semibold">{e.name}</p>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <p className="text-sm font-semibold leading-tight">{e.name}</p>
                 <StatusChip event={e} className="h-6 px-2 text-[11px]" />
               </div>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground" title={e.bonus}>{e.bonus || `${e.place} · ${dateRange(e.start, e.end)}`}</p>
+              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground" title={e.bonus}>{e.bonus || `${e.place} · ${dateRange(e.start, e.end)}`}</p>
             </div>
             {e.url && (
               <a href={e.url} target="_blank" rel="noopener noreferrer" className="grid size-10 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={`${e.name} website (opens in a new tab)`}>

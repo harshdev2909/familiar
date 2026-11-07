@@ -38,8 +38,21 @@ function eggGeometry() {
   return g;
 }
 
+/**
+ * Our media lives at `/api/media/…` on every deployment, so load it same-origin: WebGL textures need
+ * CORS, and a URL stored under another origin (an older domain, the dev server) would otherwise fail.
+ */
+function sameOriginMedia(src: string) {
+  try {
+    const u = new URL(src, window.location.href);
+    return u.pathname.startsWith("/api/media/") ? u.pathname : src;
+  } catch {
+    return src;
+  }
+}
+
 function Screen({ image, dim }: { image: string; dim: boolean }) {
-  const tex = useTexture(image, (t) => {
+  const tex = useTexture(sameOriginMedia(image), (t) => {
     t.colorSpace = THREE.SRGBColorSpace;
     t.anisotropy = 4;
   });

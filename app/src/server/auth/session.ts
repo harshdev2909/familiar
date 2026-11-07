@@ -15,6 +15,8 @@ export interface Session {
   privyUserId?: string;
   /** User-scoped 0G credential for iAI sessions (encrypted inside the JWT, never sent to the browser in clear). */
   zgUserToken?: string;
+  /** Signature-less "try the demo" session: may visit and play, never manage keys, data, pushes or trades. */
+  demo?: boolean;
   /** Set when the request authenticated with a personal `fam_` key (connectors) instead of the cookie. */
   apiKeyId?: string;
 }
@@ -22,7 +24,7 @@ export interface Session {
 const key = () => new TextEncoder().encode(env().SESSION_SECRET);
 
 export async function issueSession(s: Session): Promise<string> {
-  return new SignJWT({ m: s.method, p: s.privyUserId, z: s.zgUserToken ? await seal(s.zgUserToken) : undefined })
+  return new SignJWT({ m: s.method, p: s.privyUserId, z: s.zgUserToken ? await seal(s.zgUserToken) : undefined, d: s.demo ? 1 : undefined })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(s.address)
     .setIssuedAt()
@@ -61,10 +63,16 @@ export async function getSession(req: Request): Promise<Session | null> {
       method: payload.m === "iai" ? "iai" : "wallet",
       privyUserId: typeof payload.p === "string" ? payload.p : undefined,
       zgUserToken: typeof payload.z === "string" ? await unseal(payload.z) : undefined,
+      demo: payload.d === 1 ? true : undefined,
     };
   } catch {
     return null;
   }
+}
+
+/** Demo sessions are shared by every visitor, so anything destructive or persistent is off-limits. */
+export function forbidDemo(s: Session, what: string) {
+  if (s.demo) throw new AppError("FORBIDDEN", `The demo can't ${what} — sign in with your own wallet`);
 }
 
 export async function requireSession(req: Request): Promise<Session> {

@@ -42,3 +42,15 @@ describe("festival + catalog", () => {
     expect(imagePromptFor("seed", "sprite", "scene")).not.toContain(", .");
   });
 });
+
+describe("weekly streak", () => {
+  it("counts the longest run of consecutive nights, and weeks start on Monday", async () => {
+    const { longestRun, mondayOf } = await import("@/server/game/service");
+    expect(longestRun([])).toBe(0);
+    expect(longestRun(["2026-11-02", "2026-11-04", "2026-11-05"])).toBe(2);
+    expect(longestRun(["2026-11-05", "2026-11-03", "2026-11-04", "2026-11-04"])).toBe(3);
+    expect(mondayOf("2026-11-07")).toBe("2026-11-02");
+    expect(mondayOf("2026-11-02")).toBe("2026-11-02");
+    expect(mondayOf("2026-11-08")).toBe("2026-11-02");
+  });
+});

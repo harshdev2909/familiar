@@ -1100,6 +1100,15 @@ describe("round 4: meet in person, night walks, trades, diary, push", () => {
     expect((await call("trades", "GET")).body.incoming).toHaveLength(5);
   });
 
+  it("an item traded away can be bought again (ledger refs are per purchase)", async () => {
+    const { d, schema, eq } = await dbx();
+    // A gave its diya to B in the trades test; top A up and buy another.
+    await d.update(schema.familiars).set({ sparks: 500 }).where(eq(schema.familiars.label, label));
+    const again = await call("buy", "POST", { json: { itemId: "diya" } });
+    expect(again.status).toBe(200);
+    expect((await call("buy", "POST", { json: { itemId: "diya" } })).status).toBe(409);
+  });
+
   it("weekly diary: written by 0GM from the week's nights and memory, rewritten once a day, past weeks once", async () => {
     const { isoWeek } = await import("@/server/game/progress");
     const today = new Date().toISOString().slice(0, 10);
@@ -1219,6 +1228,13 @@ describe("free hatch cap, demo, forget", () => {
     expect(status).toBe(200);
     expect(body.session.address).toBe(user.address);
     expect(body.familiar.label).toBe(label);
+    // A demo session is shared by every visitor: it can play, but never delete data or mint connector links.
+    const demoCookie = (await call("demo", "POST", { cookie: "none=1" })).res.headers.get("set-cookie")!.split(";")[0]!;
+    expect((await call("quests", "GET", { cookie: demoCookie })).status).toBe(200);
+    const forget = await call("familiar", "DELETE", { params: { name: label }, json: { confirm: label }, cookie: demoCookie });
+    expect(forget.status).toBe(403);
+    expect(forget.body.error.message).toMatch(/demo/);
+    expect((await call("keys", "POST", { json: { label: "x" }, cookie: demoCookie })).status).toBe(403);
     process.env.DEMO_LOGIN_ENABLED = "false";
     (await import("@/server/env")).resetEnvForTests();
   });

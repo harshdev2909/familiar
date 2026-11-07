@@ -1,4 +1,5 @@
 import "server-only";
+import { forbidDemo } from "../auth/session";
 import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { type Address, type Hex, getAddress } from "viem";
 import type { Session } from "../auth/session";
@@ -531,6 +532,7 @@ export async function pollEvolution(visitId: string) {
  * records stay with the owner; hatching the same name again adopts it with a blank memory.
  */
 export async function forget(session: Session, rawLabel: string) {
+  forbidDemo(session, "forget this Familiar");
   const f = await requireOwned(session, rawLabel);
   const d = await db();
   const rows = await d.query.visits.findMany({ where: eq(schema.visits.familiarId, f.id) });

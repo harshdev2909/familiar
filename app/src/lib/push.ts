@@ -61,13 +61,19 @@ export function usePush(enabled: boolean) {
     const permission = await Notification.requestPermission();
     if (permission !== "granted") throw new ApiError(0, permission === "denied" ? "DENIED" : "DISMISSED", "Notifications are off for this site");
     const reg = await registration();
+    const wanted = keyBytes(key);
     let sub = await reg.pushManager.getSubscription();
+    // Reuse an existing subscription only if it was made with today's server key (keys can rotate).
+    if (sub && !sameKey(sub.options.applicationServerKey, wanted)) {
+      await sub.unsubscribe().catch(() => undefined);
+      sub = null;
+    }
     try {
-      sub ??= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) });
+      sub ??= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: wanted });
     } catch {
-      // A subscription made with an older key: drop it and subscribe afresh.
+      // A stale subscription the browser wouldn't replace: drop it and subscribe afresh.
       await (await reg.pushManager.getSubscription())?.unsubscribe();
-      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) });
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: wanted });
     }
     const json = sub.toJSON();
     if (!json.keys?.p256dh || !json.keys.auth) throw new ApiError(0, "INTERNAL", "This browser didn't hand over push keys");
@@ -93,4 +99,11 @@ export function usePush(enabled: boolean) {
     subscribe,
     unsubscribe,
   };
+}
+
+/** Compare a subscription's applicationServerKey with the expected key bytes. */
+function sameKey(have: ArrayBuffer | null, want: Uint8Array) {
+  if (!have) return false;
+  const a = new Uint8Array(have);
+  return a.length === want.length && a.every((v, i) => v === want[i]);
 }

@@ -1,23 +1,7 @@
-/**
- * Long-running server (Railway) start-up:
- * - seed the media volume with media shipped in `seed-media/` (files already on the volume are never overwritten);
- * - run the reconcile job in-process every 5 minutes instead of relying on platform crons (INTERNAL_CRON=true).
- */
+/** Server start-up hooks. The Node-only work lives in instrumentation-node.ts so the Edge build never sees it. */
 export async function register() {
-  if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  if (process.env.MEDIA_DIR) await seedMedia(process.env.MEDIA_DIR).catch((e) => console.error("seed_media_failed", e));
-  if (process.env.INTERNAL_CRON !== "true" || !process.env.CRON_SECRET) return;
-  const port = process.env.PORT ?? "3000";
-  const tick = () =>
-    fetch(`http://127.0.0.1:${port}/api/cron/reconcile`, { headers: { authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => undefined);
-  setTimeout(tick, 30_000);
-  setInterval(tick, 5 * 60_000).unref();
-}
-
-async function seedMedia(target: string) {
-  const { cp, stat } = await import("node:fs/promises");
-  const { join } = await import("node:path");
-  const source = join(process.cwd(), "seed-media");
-  if (!(await stat(source).catch(() => null))?.isDirectory()) return;
-  await cp(source, target, { recursive: true, force: false, errorOnExist: false });
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { start } = await import("./instrumentation-node");
+    await start();
+  }
 }
