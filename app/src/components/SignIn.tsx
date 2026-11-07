@@ -20,9 +20,24 @@ function messageOf(e: unknown) {
   return "Couldn't sign in — try again";
 }
 
-function ZeroGButton({ onDone, onError }: { onDone: () => void; onError: (m: string) => void }) {
+/** 0G's Privy app is invite-only; remember a rejection so the wallet stays the obvious path. */
+const ZG_REJECTED = "familiar:zg-rejected";
+const rememberRejected = () => {
+  try {
+    localStorage.setItem(ZG_REJECTED, "1");
+  } catch {}
+};
+const wasRejected = () => {
+  try {
+    return localStorage.getItem(ZG_REJECTED) === "1";
+  } catch {
+    return false;
+  }
+};
+
+function ZeroGButton({ onDone, onError, onRejected }: { onDone: () => void; onError: (m: string) => void; onRejected: () => void }) {
   const { completeZeroG } = useSession();
-  const { getAccessToken, authenticated, ready } = usePrivy();
+  const { getAccessToken, authenticated, ready, logout } = usePrivy();
   const [busy, setBusy] = useState(false);
   const finish = async () => {
     try {
@@ -36,10 +51,22 @@ function ZeroGButton({ onDone, onError }: { onDone: () => void; onError: (m: str
       setBusy(false);
     }
   };
-  const { login } = useLogin({ onComplete: () => void finish(), onError: () => setBusy(false) });
+  const { login } = useLogin({
+    onComplete: () => void finish(),
+    onError: (code) => {
+      setBusy(false);
+      if (code === "allowlist_rejected") {
+        rememberRejected();
+        void logout().catch(() => undefined);
+        onRejected();
+      } else if (code !== "exited_auth_flow") {
+        onError("0G sign-in didn't finish — try again, or connect a wallet");
+      }
+    },
+  });
   return (
     <Button
-      variant="primary"
+      variant="outline"
       size="lg"
       className="w-full justify-between"
       loading={busy}
@@ -53,7 +80,7 @@ function ZeroGButton({ onDone, onError }: { onDone: () => void; onError: (m: str
       <span className="inline-flex items-center gap-2">
         <Sparkles className="size-4" aria-hidden /> Sign in with 0G
       </span>
-      <span className="text-xs font-normal opacity-80">uses your daily credits</span>
+      <span className="text-xs font-normal text-muted-foreground">invite-only beta · daily credits</span>
     </Button>
   );
 }
@@ -133,6 +160,7 @@ export function SignInDialog({ open, onClose, onSignedIn }: { open: boolean; onC
   const [picking, setPicking] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [zgBlocked, setZgBlocked] = useState(wasRejected);
   const done = () => {
     setError(null);
     setPicking(false);
@@ -166,13 +194,35 @@ export function SignInDialog({ open, onClose, onSignedIn }: { open: boolean; onC
           <WalletList onPick={(c) => void pick(c)} busyId={busyId} onBack={() => setPicking(false)} />
         ) : (
           <>
-            {zeroGEnabled && <ZeroGButton onDone={done} onError={setError} />}
-            <Button variant="outline" size="lg" className="w-full justify-between" onClick={() => (setError(null), setPicking(true))}>
+            <Button
+              variant="primary"
+              size="lg"
+              className="w-full justify-between"
+              onClick={() => {
+                setError(null);
+                setPicking(true);
+              }}
+            >
               <span className="inline-flex items-center gap-2">
                 <Wallet className="size-4" aria-hidden /> Connect a wallet
               </span>
-              <span className="text-xs font-normal text-muted-foreground">feed with $1 on Base</span>
+              <span className="text-xs font-normal opacity-80">any wallet · feed with $1 on Base</span>
             </Button>
+            {zeroGEnabled &&
+              (zgBlocked ? (
+                <p className="rounded-2xl bg-butter px-3 py-2 text-xs leading-relaxed text-butter-ink">
+                  0G sign-in is invite-only for now, and this account isn&apos;t on the list yet. Connect a wallet instead — it works the same.
+                </p>
+              ) : (
+                <ZeroGButton
+                  onDone={done}
+                  onError={setError}
+                  onRejected={() => {
+                    setZgBlocked(true);
+                    setPicking(true);
+                  }}
+                />
+              ))}
           </>
         )}
         {error && (
