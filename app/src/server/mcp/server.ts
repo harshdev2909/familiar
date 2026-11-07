@@ -12,6 +12,9 @@ import { eventViews } from "../game/events";
 import { CARE_ACTIONS } from "../game/meters";
 import { buy, claimQuest, equip, quests, shop, spin } from "../game/service";
 import { explore, gift, spot } from "../game/social";
+import { listTrades } from "../game/trades";
+import { createWalk } from "../game/walks";
+import { getDiary } from "../familiar/diary";
 import { log } from "../log";
 
 /**
@@ -310,6 +313,64 @@ const handler = createMcpHandler(
         run("send_gift", async () => {
           const r = await gift(sessionOf(ctx), label);
           return `Sent ${r.gifted} a gift. +${r.reward.xp} XP for you, 5 Sparks for them.`;
+        }),
+    );
+
+    server.registerTool(
+      "start_night_walk",
+      {
+        title: "Start a night walk",
+        description: "Host tonight's night walk: share the invite link with up to two friends. When they join, all the Familiars are painted walking together and each earns 20 Sparks. Once per night.",
+        inputSchema: z.object({}),
+        annotations: WRITE,
+      },
+      async (_args, ctx) =>
+        run("start_night_walk", async () => {
+          const { walk } = await createWalk(sessionOf(ctx));
+          return lines(
+            `${walk.host} is ready for a night walk.`,
+            `Invite up to two friends: ${walk.inviteUrl}`,
+            "When the third Familiar joins, the painting starts (or the host can start with two in the app).",
+          );
+        }),
+    );
+
+    server.registerTool(
+      "list_trades",
+      {
+        title: "List accessory trades",
+        description: "Show accessory swap offers sent to you and by you (pending ones expire after 72 h), plus recently resolved trades. Accept or decline them in the app.",
+        inputSchema: z.object({}),
+        annotations: READ,
+      },
+      async (_args, ctx) =>
+        run("list_trades", async () => {
+          const { incoming, outgoing, history } = await listTrades(sessionOf(ctx));
+          const fmt = (x: (typeof incoming)[number]) => `${x.from.label} gives ${x.give.name} for ${x.to.label}'s ${x.want.name}`;
+          return lines(
+            incoming.length ? `Offers for you:\n${incoming.map((x) => `- ${fmt(x)} (expires ${x.expiresAt})`).join("\n")}` : "No offers waiting for you.",
+            outgoing.length ? `Your open offers:\n${outgoing.map((x) => `- ${fmt(x)}`).join("\n")}` : "You have no open offers.",
+            history.length > 0 && `Recently:\n${history.map((x) => `- ${fmt(x)}: ${x.status}`).join("\n")}`,
+            (incoming.length > 0 || outgoing.length > 0) && `Answer offers at ${env().APP_URL}.`,
+          );
+        }),
+    );
+
+    server.registerTool(
+      "read_diary",
+      {
+        title: "Read your Familiar's diary",
+        description: "Read the diary your Familiar wrote about this week (or a past ISO week like 2026-W45), in its own voice.",
+        inputSchema: z.object({ week: z.string().regex(/^\d{4}-W\d{2}$/).optional().describe("ISO week, e.g. 2026-W45. Defaults to this week.") }),
+        annotations: READ,
+      },
+      async ({ week }, ctx) =>
+        run("read_diary", async () => {
+          const session = sessionOf(ctx);
+          const me = await myFamiliarRow(session);
+          const { diary, canWrite } = await getDiary(session, me.label, week);
+          if (!diary) return canWrite ? `${me.label} hasn't written this week's diary yet — ask it to in the app at ${env().APP_URL}.` : `No diary for that week yet — ${me.label} writes about weeks you visited.`;
+          return lines(`${me.label}'s diary, ${diary.week} — ${diary.moodLine}`, "", diary.text, diary.days.length > 0 && `Moods: ${diary.days.map((d) => `${d.date} ${d.mood ?? "?"}`).join(", ")}`);
         }),
     );
 

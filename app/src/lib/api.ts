@@ -10,7 +10,15 @@ import type {
   GiftResult,
   SpotResult,
   CreditsResult,
+  DiaryResult,
+  DiaryView,
   FamiliarView,
+  MeetCode,
+  MeetResult,
+  PushSubscriptionInput,
+  TradeView,
+  TradesResult,
+  WalkView,
   FeedBuild,
   FeedConfirmResult,
   FeedQuoteView,
@@ -60,7 +68,8 @@ async function request<T>(path: string, init: RequestInit & { json?: unknown } =
 
 const get = async <T>(path: string) => (await request<T>(path)).body;
 const post = async <T>(path: string, json?: unknown) => (await request<T>(path, { method: "POST", json: json ?? {} })).body;
-const del = async <T>(path: string) => (await request<T>(path, { method: "DELETE" })).body;
+const del = async <T>(path: string, json?: unknown) => (await request<T>(path, { method: "DELETE", json })).body;
+const enc = encodeURIComponent;
 const postForm = async <T>(path: string, form: FormData) => (await request<T>(path, { method: "POST", body: form })).body;
 
 export const api = {
@@ -111,6 +120,30 @@ export const api = {
 
   ens: (name: string) => get<{ ens: LiveEns }>(`/api/ens/${encodeURIComponent(name)}`),
   overreach: (name: string) => post<AgentOverreachResult>(`/api/ens/${encodeURIComponent(name)}/agent-overreach`),
+
+  /* Round 4 */
+  meetCode: (name: string) => get<MeetCode>(`/api/familiar/${enc(name)}/meet-code`),
+  meet: (name: string, code: string) => post<MeetResult>(`/api/familiar/${enc(name)}/meet`, { code }),
+
+  startWalk: () => post<{ walk: WalkView }>("/api/walks"),
+  walk: (id: string) => get<{ walk: WalkView }>(`/api/walks/${enc(id)}`),
+  joinWalk: (id: string) => post<{ walk: WalkView }>(`/api/walks/${enc(id)}/join`),
+  beginWalk: (id: string) => post<{ walk: WalkView }>(`/api/walks/${enc(id)}/start`),
+  walks: (name: string) => get<{ walks: WalkView[] }>(`/api/familiar/${enc(name)}/walks`),
+
+  trades: () => get<TradesResult>("/api/trades"),
+  proposeTrade: (to: string, give: string, want: string) => post<{ trade: TradeView }>("/api/trades", { to, give, want }),
+  acceptTrade: (id: string) => post<{ trade: TradeView }>(`/api/trades/${enc(id)}/accept`),
+  declineTrade: (id: string) => post<{ trade: TradeView }>(`/api/trades/${enc(id)}/decline`),
+  cancelTrade: (id: string) => post<{ trade: TradeView }>(`/api/trades/${enc(id)}/cancel`),
+
+  diary: (name: string, week?: string) => get<DiaryResult>(`/api/familiar/${enc(name)}/diary${week ? `?week=${enc(week)}` : ""}`),
+  writeDiary: (name: string, week?: string) => post<{ diary: DiaryView }>(`/api/familiar/${enc(name)}/diary`, week ? { week } : {}),
+
+  pushKey: () => get<{ key: string | null }>("/api/push/key"),
+  pushSubscribe: (sub: PushSubscriptionInput) => post<{ ok: true }>("/api/push/subscribe", sub),
+  pushUnsubscribe: (endpoint: string) => del<{ ok: true }>("/api/push/subscribe", { endpoint }),
+  pushTest: () => post<{ sent: number }>("/api/push/test"),
 };
 
 /** A visit's input: a voice note, or (round 3) typed text, 1–1000 characters. */

@@ -565,6 +565,7 @@ describe("round 3: text visits, care, explore, dex, gifts, events, connectors", 
       ["devcon-8", "live"],
       ["ethglobal-mumbai", "live"],
       ["diwali-2026", "live"],
+      ["lantern-night", "upcoming"],
     ]);
   });
 
@@ -803,6 +804,389 @@ describe("round 3: text visits, care, explore, dex, gifts, events, connectors", 
     for (let i = 0; i < 5; i++) expect((await call("keys", "POST", { json: { label: `k${i}` } })).status).toBe(200);
     const sixth = await call("keys", "POST", { json: { label: "k5" } });
     expect(sixth.status).toBe(409);
+  });
+});
+
+describe("round 4: meet in person, night walks, trades, diary, push", () => {
+  type Seeded = { label: string; cookie: string; id: string };
+  let B: Seeded;
+  let C: Seeded;
+  let D: Seeded;
+  const setEnv = async (vars: Record<string, string | undefined>) => {
+    for (const [k, v] of Object.entries(vars)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    (await import("@/server/env")).resetEnvForTests();
+  };
+  const dbx = async () => {
+    const { db, schema } = await import("@/server/db/client");
+    const orm = await import("drizzle-orm");
+    return { d: await db(), schema, eq: orm.eq, and: orm.and };
+  };
+  const stats = async (name: string) => {
+    const { d, schema, eq } = await dbx();
+    const [row] = await d.select({ sparks: schema.familiars.sparks, xp: schema.familiars.xp }).from(schema.familiars).where(eq(schema.familiars.label, name));
+    return row!;
+  };
+  /** A signed-in human with a Familiar inserted straight into the DB (no chain needed), wearing A's portrait. */
+  const seed = async (suffix: string, species: string, color: string): Promise<Seeded> => {
+    const who = privateKeyToAccount(generatePrivateKey());
+    const n = await call("nonce", "POST", { json: { address: who.address }, cookie: "none=1" });
+    const v = await call("verify", "POST", { json: { message: n.body.message, signature: await who.signMessage({ message: n.body.message }) }, cookie: "none=1" });
+    const { d, schema, eq } = await dbx();
+    const [a] = await d.select().from(schema.familiars).where(eq(schema.familiars.label, label));
+    await d.insert(schema.users).values({ address: who.address.toLowerCase() }).onConflictDoNothing();
+    const [row] = await d
+      .insert(schema.familiars)
+      .values({
+        label: `${label}${suffix}`,
+        ensNode: generatePrivateKey(),
+        owner: who.address.toLowerCase(),
+        species,
+        color,
+        styleSeed: `cute round ${species} creature`,
+        resolver: a!.resolver,
+        expiresAt: new Date(Date.now() + 7 * 86_400_000),
+        day: 1,
+        portraitUrl: a!.portraitUrl,
+      })
+      .returning();
+    return { label: row!.label, cookie: v.res.headers.get("set-cookie")!.split(";")[0]!, id: row!.id };
+  };
+
+  beforeAll(async () => {
+    const load = (p: string) => import(`@/app/api/${p}/route`);
+    Object.assign(R, {
+      meetCode: await load("familiar/[name]/meet-code"),
+      meet: await load("familiar/[name]/meet"),
+      walks: await load("walks"),
+      walk: await load("walks/[id]"),
+      walkJoin: await load("walks/[id]/join"),
+      walkStart: await load("walks/[id]/start"),
+      famWalks: await load("familiar/[name]/walks"),
+      trades: await load("trades"),
+      tradeAccept: await load("trades/[id]/accept"),
+      tradeDecline: await load("trades/[id]/decline"),
+      tradeCancel: await load("trades/[id]/cancel"),
+      diary: await load("familiar/[name]/diary"),
+      pushKey: await load("push/key"),
+      pushSub: await load("push/subscribe"),
+    });
+    B = await seed("m", "owl", "tide blue");
+    C = await seed("n", "otter", "moss green");
+    D = await seed("o", "moth", "rose pink");
+  });
+
+  it("meet in person: a daily QR code, 3× the spot reward, once, and it upgrades a remote spot", async () => {
+    const code = await call("meetCode", "GET", { params: { name: label } });
+    expect(code.status).toBe(200);
+    expect(code.body.code).toMatch(/^[A-Za-z0-9_-]{16}$/);
+    expect(code.body.url).toBe(`http://localhost:3000/meet/${label}?c=${code.body.code}`);
+    const midnight = new Date();
+    midnight.setUTCHours(24, 0, 0, 0);
+    expect(code.body.expiresAt).toBe(midnight.toISOString());
+    expect((await call("meetCode", "GET", { params: { name: label }, cookie: B.cookie })).status).toBe(403);
+
+    const bad = await call("meet", "POST", { params: { name: label }, json: { code: "x".repeat(16) }, cookie: B.cookie });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.code).toBe("INVALID_CODE");
+    const before = await stats(B.label);
+    const met = await call("meet", "POST", { params: { name: label }, json: { code: code.body.code }, cookie: B.cookie });
+    expect(met.status).toBe(200);
+    expect(met.body).toEqual({ met: label, reward: { sparks: 45, xp: 15 }, newSpecies: true, inPerson: true });
+    expect(await stats(B.label)).toEqual({ sparks: before.sparks + 45, xp: before.xp + 15 });
+    const again = await call("meet", "POST", { params: { name: label }, json: { code: code.body.code }, cookie: B.cookie });
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe("ALREADY_MET");
+    expect((await call("spot", "POST", { params: { name: label }, cookie: B.cookie })).body.error.code).toBe("ALREADY_SPOTTED");
+    expect((await call("meet", "POST", { params: { name: label }, json: { code: code.body.code } })).status).toBe(400); // your own
+
+    // A spotted the iAI Familiar remotely in round 3: meeting it in person still pays once (no new-species bonus).
+    const iaiCode = (await call("meetCode", "GET", { params: { name: iaiLabel }, cookie: iaiCookie })).body.code;
+    const a0 = await stats(label);
+    const up = await call("meet", "POST", { params: { name: iaiLabel }, json: { code: iaiCode } });
+    expect(up.body).toEqual({ met: iaiLabel, reward: { sparks: 15, xp: 15 }, newSpecies: false, inPerson: true });
+    expect((await stats(label)).sparks).toBe(a0.sparks + 15);
+    expect((await call("meet", "POST", { params: { name: iaiLabel }, json: { code: iaiCode } })).body.error.code).toBe("ALREADY_MET");
+
+    const ex = (await call("explore", "GET")).body.familiars as { label: string; spotted: boolean; metInPerson: boolean }[];
+    expect(ex.find((x) => x.label === iaiLabel)).toMatchObject({ spotted: true, metInPerson: true });
+    expect(ex.find((x) => x.label === `${label}t`)).toMatchObject({ spotted: true, metInPerson: false });
+    expect(ex.find((x) => x.label === B.label)).toMatchObject({ spotted: false, metInPerson: false });
+    const dexSpotted = (await call("dex", "GET")).body.spotted as { label: string; metInPerson: boolean }[];
+    expect(dexSpotted.find((x) => x.label === iaiLabel)?.metInPerson).toBe(true);
+    expect(dexSpotted.find((x) => x.label === `${label}t`)?.metInPerson).toBe(false);
+
+    // ETHGlobal Mumbai's last day: the in-person quest.
+    await setEnv({ EVENTS_TODAY: "2026-11-07" });
+    const q = (await call("quests", "GET")).body.quests as { id: string }[];
+    expect(q.find((x) => x.id === "hackathon-meet")).toMatchObject({ kind: "event", progress: 1, goal: 1, claimable: true, reward: 40, period: "ethglobal-mumbai" });
+    await setEnv({ EVENTS_TODAY: "2026-10-01" });
+    expect(((await call("quests", "GET")).body.quests as { id: string }[]).map((x) => x.id)).not.toContain("hackathon-meet");
+  });
+
+  it("night walk: create → join → the third member auto-paints → done, each member paid once", async () => {
+    const created = await call("walks", "POST");
+    expect(created.status).toBe(200);
+    const w = created.body.walk;
+    expect(w).toMatchObject({ status: "gathering", host: label, imageUrl: null, joined: true, canJoin: false, canStart: false, inviteUrl: `http://localhost:3000/walk/${w.id}` });
+    expect(w.members).toEqual([{ label, species: "fox", color: "ember orange", portraitUrl: expect.stringContaining("/portraits/") }]);
+    const twice = await call("walks", "POST");
+    expect(twice.status).toBe(409);
+    expect(twice.body.error.code).toBe("ALREADY_WALKED");
+    expect((await call("walk", "GET", { params: { id: w.id }, cookie: "none=1" })).body.walk).toMatchObject({ canJoin: false, canStart: false, joined: false });
+    expect((await call("walk", "GET", { params: { id: w.id }, cookie: B.cookie })).body.walk).toMatchObject({ canJoin: true, canStart: false, joined: false });
+    expect((await call("walk", "GET", { params: { id: "not-a-walk" }, cookie: "none=1" })).status).toBe(404);
+    expect((await call("walkStart", "POST", { params: { id: w.id } })).status).toBe(400); // alone
+
+    const joined = await call("walkJoin", "POST", { params: { id: w.id }, cookie: B.cookie });
+    expect(joined.status).toBe(200);
+    expect(joined.body.walk).toMatchObject({ status: "gathering", joined: true, canJoin: false });
+    expect(joined.body.walk.members.map((x: { label: string }) => x.label)).toEqual([label, B.label]);
+    expect((await call("walk", "GET", { params: { id: w.id } })).body.walk.canStart).toBe(true);
+    expect((await call("walkStart", "POST", { params: { id: w.id }, cookie: B.cookie })).status).toBe(403);
+    expect((await call("walkJoin", "POST", { params: { id: w.id }, cookie: B.cookie })).body.error.code).toBe("CONFLICT");
+
+    // One join per Familiar per day: B can't also join D's walk.
+    const dWalk = (await call("walks", "POST", { cookie: D.cookie })).body.walk;
+    const second = await call("walkJoin", "POST", { params: { id: dWalk.id }, cookie: B.cookie });
+    expect(second.status).toBe(409);
+    expect(second.body.error.code).toBe("ALREADY_WALKED");
+    expect((await call("walk", "GET", { params: { id: dWalk.id }, cookie: B.cookie })).body.walk.canJoin).toBe(false);
+
+    const [a0, b0, c0, d0] = await Promise.all([stats(label), stats(B.label), stats(C.label), stats(D.label)]);
+    const mark = zg.calls.length;
+    const third = await call("walkJoin", "POST", { params: { id: w.id }, cookie: C.cookie });
+    expect(third.status).toBe(200);
+    expect(third.body.walk).toMatchObject({ status: "painting", imageUrl: null });
+    const full = await call("walkJoin", "POST", { params: { id: w.id }, cookie: D.cookie });
+    expect(full.status).toBe(409);
+    expect(full.body.error.code).toBe("WALK_FULL");
+
+    await flushAfter();
+    const done = (await call("walk", "GET", { params: { id: w.id }, cookie: "none=1" })).body.walk;
+    expect(done.status).toBe("done");
+    expect(done.imageUrl).toMatch(new RegExp(`/api/media/walks/${w.id}\\.png$`));
+    const draw = zg.calls.slice(mark).find((c) => c.path === "/images/generations")!;
+    const body = draw.body as { prompt: string; image: string[] };
+    expect(draw.auth).toBe("Bearer sk-test"); // team-paid
+    expect(body.image).toHaveLength(3);
+    expect(body.image.every((x) => x.startsWith("data:image/png;base64,"))).toBe(true);
+    expect(body.prompt).toContain("walking together through a lantern-lit night street");
+    for (const s of ["ember orange fox", "tide blue owl", "moss green otter"]) expect(body.prompt).toContain(s);
+    expect(await stats(label)).toEqual({ sparks: a0.sparks + 20, xp: a0.xp + 20 });
+    expect(await stats(B.label)).toEqual({ sparks: b0.sparks + 20, xp: b0.xp + 20 });
+    expect(await stats(C.label)).toEqual({ sparks: c0.sparks + 20, xp: c0.xp + 20 });
+    expect(await stats(D.label)).toEqual(d0);
+
+    const list = await call("famWalks", "GET", { params: { name: B.label }, cookie: "none=1" });
+    expect(list.status).toBe(200);
+    expect(list.body.walks.map((x: { id: string }) => x.id)).toEqual([w.id]);
+    expect(list.body.walks[0]).toMatchObject({ status: "done", host: label, canJoin: false, canStart: false });
+    expect((await call("famWalks", "GET", { params: { name: D.label }, cookie: "none=1" })).body.walks).toEqual([]);
+    const quest = ((await call("quests", "GET")).body.quests as { id: string }[]).find((x) => x.id === "daily-walk");
+    expect(quest).toMatchObject({ kind: "daily", progress: 1, claimable: true, reward: 20 });
+
+    // Start early with two, and a painting that fails: no rewards.
+    expect((await call("walkJoin", "POST", { params: { id: dWalk.id } })).status).toBe(200); // A hosted, but hasn't joined anyone's yet
+    zg.failNext("/images/generations", 500);
+    const started = await call("walkStart", "POST", { params: { id: dWalk.id }, cookie: D.cookie });
+    expect(started.body.walk.status).toBe("painting");
+    const a1 = await stats(label);
+    await flushAfter();
+    expect((await call("walk", "GET", { params: { id: dWalk.id }, cookie: "none=1" })).body.walk).toMatchObject({ status: "failed", imageUrl: null });
+    expect(await stats(D.label)).toEqual(d0);
+    expect(await stats(label)).toEqual(a1);
+    expect((await call("walkJoin", "POST", { params: { id: dWalk.id }, cookie: C.cookie })).status).toBe(409);
+  });
+
+  it("night walks: global daily cap, a failed walk frees the host's night, the cron fails stuck paintings", async () => {
+    await setEnv({ WALKS_PER_DAY: "2" });
+    const capped = await call("walks", "POST", { cookie: D.cookie });
+    expect(capped.status).toBe(429);
+    expect(capped.body.error.code).toBe("RATE_LIMITED");
+    await setEnv({ WALKS_PER_DAY: undefined });
+    const again = await call("walks", "POST", { cookie: D.cookie });
+    expect(again.status).toBe(200);
+    const { d, schema, eq } = await dbx();
+    await d.update(schema.walks).set({ status: "painting", startedAt: new Date(Date.now() - 11 * 60_000) }).where(eq(schema.walks.id, again.body.walk.id));
+    const req = new Request("http://localhost:3000/api/cron/reconcile", { headers: { authorization: "Bearer cron-secret-for-tests-123" } });
+    const res = await R.cron!.GET!(req, { params: Promise.resolve({}) });
+    expect((await res.json()).walksFailed).toBe(1);
+    expect((await call("walk", "GET", { params: { id: again.body.walk.id }, cookie: "none=1" })).body.walk.status).toBe("failed");
+  });
+
+  it("trades: friends only, ownership rules, atomic swap that takes worn items off, decline, cancel, expiry, caps", async () => {
+    const { d, schema, eq, and } = await dbx();
+    const inv = schema.inventory;
+    // A owns (and wears) the diya from the shop test; B gets a star cap and wears it; C a garland.
+    await d.insert(inv).values([
+      { familiarId: B.id, itemId: "starcap", source: "shop" },
+      { familiarId: C.id, itemId: "garland", source: "shop" },
+    ]);
+    await call("equip", "POST", { params: { name: label }, json: { slot: "hand", itemId: "diya" } });
+    expect((await call("equip", "POST", { params: { name: B.label }, json: { slot: "head", itemId: "starcap" }, cookie: B.cookie })).status).toBe(200);
+
+    const strangers = await call("trades", "POST", { json: { to: B.label, give: "garland", want: "starcap" }, cookie: C.cookie });
+    expect(strangers.status).toBe(403);
+    expect(strangers.body.error.code).toBe("NOT_FRIENDS");
+    const offer = (give: string, want: string, cookie = B.cookie, to = label) => call("trades", "POST", { json: { to, give, want }, cookie });
+    expect((await offer("garland", "diya")).body.error).toMatchObject({ code: "BAD_REQUEST", message: expect.stringMatching(/doesn't have the marigold garland/) });
+    expect((await offer("starcap", "kandil")).body.error.message).toMatch(/doesn't have the akash kandil/);
+    expect((await offer("starcap", "nope")).status).toBe(400);
+    expect((await offer("starcap", "diya", B.cookie, B.label)).status).toBe(400); // yourself
+
+    const made = await offer("starcap", "diya");
+    expect(made.status).toBe(200);
+    const t1 = made.body.trade;
+    expect(t1).toMatchObject({
+      status: "pending",
+      from: { label: B.label, species: "owl" },
+      to: { label, species: "fox" },
+      give: { id: "starcap", name: "Star cap", art: "/art/items/starcap.jpg" },
+      want: { id: "diya", name: "Clay diya", art: "/art/items/diya.jpg" },
+    });
+    expect(Date.parse(t1.expiresAt) - Date.parse(t1.createdAt)).toBe(72 * 3600_000);
+    const mine = (await call("trades", "GET")).body;
+    expect(mine.incoming.map((x: { id: string }) => x.id)).toEqual([t1.id]);
+    expect(mine.outgoing).toEqual([]);
+    expect((await call("trades", "GET", { cookie: B.cookie })).body.outgoing.map((x: { id: string }) => x.id)).toEqual([t1.id]);
+    expect((await call("tradeAccept", "POST", { params: { id: t1.id }, cookie: B.cookie })).status).toBe(403);
+    expect((await call("tradeAccept", "POST", { params: { id: t1.id }, cookie: D.cookie })).status).toBe(404);
+
+    const accepted = await call("tradeAccept", "POST", { params: { id: t1.id } });
+    expect(accepted.status).toBe(200);
+    expect(accepted.body.trade.status).toBe("accepted");
+    const owned = async (id: string) => (await d.select({ item: inv.itemId }).from(inv).where(eq(inv.familiarId, id))).map((r) => r.item).sort();
+    const [aRow] = await d.select().from(schema.familiars).where(eq(schema.familiars.label, label));
+    const [bRow] = await d.select().from(schema.familiars).where(eq(schema.familiars.id, B.id));
+    expect(await owned(aRow!.id)).toContain("starcap");
+    expect(await owned(aRow!.id)).not.toContain("diya");
+    expect(await owned(B.id)).toEqual(["diya"]);
+    expect(Object.values(aRow!.equipped)).not.toContain("diya"); // taken off on the way out
+    expect(bRow!.equipped).toEqual({});
+    expect((await call("tradeAccept", "POST", { params: { id: t1.id } })).body.error.code).toBe("CONFLICT");
+    expect((await call("trades", "GET")).body.history[0]).toMatchObject({ id: t1.id, status: "accepted" });
+
+    const t2 = (await offer("diya", "starcap")).body.trade;
+    expect((await call("tradeDecline", "POST", { params: { id: t2.id }, cookie: B.cookie })).status).toBe(403);
+    expect((await call("tradeDecline", "POST", { params: { id: t2.id } })).body.trade.status).toBe("declined");
+    expect((await call("tradeCancel", "POST", { params: { id: t2.id }, cookie: B.cookie })).status).toBe(409);
+    const t3 = (await offer("diya", "starcap")).body.trade;
+    expect((await call("tradeCancel", "POST", { params: { id: t3.id } })).status).toBe(403);
+    expect((await call("tradeCancel", "POST", { params: { id: t3.id }, cookie: B.cookie })).body.trade.status).toBe("cancelled");
+
+    // Accept re-checks ownership: the star cap left A meanwhile → the offer is cancelled.
+    const t4 = (await offer("diya", "starcap")).body.trade;
+    await d.delete(inv).where(and(eq(inv.familiarId, aRow!.id), eq(inv.itemId, "starcap")));
+    expect((await call("tradeAccept", "POST", { params: { id: t4.id } })).status).toBe(409);
+    expect(await owned(B.id)).toEqual(["diya"]);
+    expect((await call("trades", "GET")).body.history.find((x: { id: string }) => x.id === t4.id).status).toBe("cancelled");
+
+    // Expiry after 72 h (reported and lazily marked).
+    await d.insert(inv).values({ familiarId: aRow!.id, itemId: "scarf", source: "shop" }).onConflictDoNothing();
+    const t5 = (await offer("diya", "scarf")).body.trade;
+    await d.update(schema.trades).set({ createdAt: new Date(Date.now() - 73 * 3600_000) }).where(eq(schema.trades.id, t5.id));
+    const listed = (await call("trades", "GET", { cookie: B.cookie })).body;
+    expect(listed.outgoing).toEqual([]);
+    expect(listed.history.find((x: { id: string }) => x.id === t5.id).status).toBe("expired");
+    expect((await call("tradeAccept", "POST", { params: { id: t5.id } })).status).toBe(409);
+
+    // At most 5 open offers.
+    for (let i = 0; i < 5; i++) expect((await offer("diya", "scarf")).status).toBe(200);
+    const sixth = await offer("diya", "scarf");
+    expect(sixth.status).toBe(409);
+    expect((await call("trades", "GET")).body.incoming).toHaveLength(5);
+  });
+
+  it("weekly diary: written by 0GM from the week's nights and memory, rewritten once a day, past weeks once", async () => {
+    const { isoWeek } = await import("@/server/game/progress");
+    const today = new Date().toISOString().slice(0, 10);
+    const week = isoWeek(today);
+    expect((await call("diary", "GET", { params: { name: label } })).body).toEqual({ diary: null, canWrite: true });
+    expect((await call("diary", "GET", { params: { name: label }, cookie: B.cookie })).status).toBe(403);
+    expect((await call("diary", "GET", { params: { name: D.label }, cookie: D.cookie })).body).toEqual({ diary: null, canWrite: false });
+    const nothing = await call("diary", "POST", { params: { name: D.label }, json: {}, cookie: D.cookie });
+    expect(nothing.status).toBe(400);
+    expect(nothing.body.error.code).toBe("NOTHING_TO_WRITE");
+
+    const mark = zg.calls.length;
+    const wrote = await call("diary", "POST", { params: { name: label }, json: {} });
+    expect(wrote.status).toBe(200);
+    expect(wrote.body.diary).toMatchObject({ week, text: expect.stringMatching(/^Dear diary/), moodLine: "Proud, a little sleepy, mostly smug.", createdAt: expect.any(String) });
+    expect(wrote.body.diary.days.at(-1)).toEqual({ date: today, mood: "proud" });
+    const chat = zg.calls.slice(mark).find((c) => c.path === "/chat/completions")!;
+    expect(chat.auth).toBe("Bearer sk-test");
+    const prompt = (chat.body as { messages: { content: string }[] }).messages[0]!.content;
+    expect(prompt).toContain("diary entry");
+    expect(prompt).toContain("builds things under pressure"); // the decrypted memory
+    expect(prompt).toContain("Never quote your human");
+
+    const soon = await call("diary", "POST", { params: { name: label }, json: {} });
+    expect(soon.status).toBe(429);
+    expect(soon.body.error.code).toBe("COOLDOWN");
+    expect(Date.parse(soon.body.error.details.readyAt)).toBeGreaterThan(Date.now() + 23 * 3600_000);
+    const read = (await call("diary", "GET", { params: { name: label } })).body;
+    expect(read).toMatchObject({ diary: { week, text: wrote.body.diary.text }, canWrite: false });
+
+    const { d, schema, eq } = await dbx();
+    const [aRow] = await d.select().from(schema.familiars).where(eq(schema.familiars.label, label));
+    await d.update(schema.diaries).set({ createdAt: new Date(Date.now() - 25 * 3600_000) }).where(eq(schema.diaries.familiarId, aRow!.id));
+    expect((await call("diary", "GET", { params: { name: label } })).body.canWrite).toBe(true);
+    const rewrote = await call("diary", "POST", { params: { name: label }, json: { week } });
+    expect(rewrote.status).toBe(200);
+    expect(rewrote.body.diary.text).not.toBe(wrote.body.diary.text);
+    expect(Date.parse(rewrote.body.diary.createdAt)).toBeGreaterThan(Date.parse(wrote.body.diary.createdAt));
+
+    for (const bad of ["2027-W10", "2025-W53", "2026-45"]) expect((await call("diary", "POST", { params: { name: label }, json: { week: bad } })).status).toBe(400);
+    expect((await call("diary", "GET", { params: { name: label }, path: "/api/x?week=nope" })).status).toBe(400);
+
+    // A past week is written once.
+    const lastWeekDate = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+    const lastWeek = isoWeek(lastWeekDate);
+    const [past] = await d
+      .insert(schema.visits)
+      .values({ familiarId: B.id, day: 99, utcDate: lastWeekDate, kind: "visit", paidBy: "free", status: "complete", mood: "calm", reply: "You hummed the whole walk home." })
+      .returning();
+    const pastDiary = await call("diary", "POST", { params: { name: B.label }, json: { week: lastWeek }, cookie: B.cookie });
+    expect(pastDiary.status).toBe(200);
+    expect(pastDiary.body.diary).toMatchObject({ week: lastWeek, days: [{ date: lastWeekDate, mood: "calm" }] });
+    await d.update(schema.diaries).set({ createdAt: new Date(Date.now() - 48 * 3600_000) }).where(eq(schema.diaries.familiarId, B.id));
+    expect((await call("diary", "POST", { params: { name: B.label }, json: { week: lastWeek }, cookie: B.cookie })).status).toBe(409);
+    expect((await call("diary", "GET", { params: { name: B.label }, path: `/api/x?week=${lastWeek}`, cookie: B.cookie })).body.canWrite).toBe(false);
+    await d.delete(schema.visits).where(eq(schema.visits.id, past!.id)); // keep the cron test's visit pool clean
+  });
+
+  it("push: VAPID key, subscribe, and the cron sends one sassy nudge per 12 h", async () => {
+    const push = await import("@/server/push");
+    const sent: { endpoint: string; body: string }[] = [];
+    push.setPushSenderForTests(async (sub, payload) => {
+      sent.push({ endpoint: sub.endpoint, body: JSON.parse(payload).body });
+      return { statusCode: 201 };
+    });
+    expect((await call("pushKey", "GET", { cookie: "none=1" })).body).toEqual({ key: null });
+    await setEnv({ VAPID_PUBLIC_KEY: "BTestPublicKey", VAPID_PRIVATE_KEY: "test-private-key" });
+    try {
+      expect((await call("pushKey", "GET", { cookie: "none=1" })).body).toEqual({ key: "BTestPublicKey" });
+      const sub = { endpoint: `https://push.example/${B.label}`, keys: { p256dh: "B".repeat(87), auth: "a".repeat(22) } };
+      expect((await call("pushSub", "POST", { json: sub, cookie: "none=1" })).status).toBe(401);
+      expect((await call("pushSub", "POST", { json: sub, cookie: B.cookie })).body).toEqual({ ok: true });
+      const { d, schema, eq } = await dbx();
+      const now = Date.now();
+      await d
+        .update(schema.familiars)
+        .set({ lastSnackAt: new Date(now - 20 * 3600_000), lastPetAt: new Date(now), lastVisitAt: new Date(now), lastVisitDate: new Date(now).toISOString().slice(0, 10) })
+        .where(eq(schema.familiars.id, B.id));
+      const cron = async () => (await (await R.cron!.GET!(new Request("http://localhost:3000/api/cron/reconcile", { headers: { authorization: "Bearer cron-secret-for-tests-123" } }), { params: Promise.resolve({}) })).json()).pushes;
+      expect(await cron()).toEqual({ familiars: 1, sent: 1, dropped: 0 });
+      expect(sent).toEqual([{ endpoint: sub.endpoint, body: `${B.label}: I'm starving. Dramatically.` }]);
+      expect((await cron()).familiars).toBe(0);
+      expect((await call("pushSub", "DELETE", { json: { endpoint: sub.endpoint }, cookie: B.cookie })).body).toEqual({ ok: true });
+    } finally {
+      push.setPushSenderForTests(null);
+      await setEnv({ VAPID_PUBLIC_KEY: undefined, VAPID_PRIVATE_KEY: undefined });
+    }
   });
 });
 

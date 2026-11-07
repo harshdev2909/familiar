@@ -1,15 +1,20 @@
 "use client";
 
 import Image from "next/image";
+import { LanternNightBanner, useLanternNight } from "@/components/events/LanternNight";
 import { useFestival } from "@/lib/festival";
 import { Diya, FairyLights } from "../art/Diwali";
 import { ButtonLink } from "../ui/button";
 
 const PREVIEW = ["diya", "garland", "crown", "kandil"];
 
+/** The festival banner. Lantern Night (live, or coming up) takes it over; otherwise it's Diwali. */
 export function DiwaliBanner() {
   const fest = useFestival();
-  if (!fest) return null;
+  const lantern = useLanternNight();
+  if (lantern.event && (lantern.live || lantern.upcoming)) return <LanternNightBanner event={lantern.event} />;
+  // Wait for the events list before showing Diwali, so the takeover never flashes in after it.
+  if (!fest || lantern.pending) return null;
   return (
     <section className="mx-auto max-w-6xl px-5 pb-6" aria-labelledby="diwali">
       <div className="relative overflow-hidden rounded-[2rem] bg-[#1d1a33] text-[#f6efe6]">

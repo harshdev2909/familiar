@@ -102,6 +102,8 @@ export interface ExploreFamiliar {
   spotted: boolean;
   mine: boolean;
   giftedToday: boolean;
+  /** Round 4: spotted face to face with a meet code (optional until every backend sends it). */
+  metInPerson?: boolean;
   /** 0.08–0.92 of the map's width/height. */
   pin: { x: number; y: number };
 }
@@ -123,7 +125,7 @@ export interface GiftResult {
 
 export interface DexResult {
   species: { id: string; name: string; art: string; caught: boolean; count: number }[];
-  spotted: { label: string; name: string; species: string; portraitUrl: string | null; spottedAt: string; giftedToday: boolean }[];
+  spotted: { label: string; name: string; species: string; portraitUrl: string | null; spottedAt: string; giftedToday: boolean; metInPerson?: boolean }[];
   caught: number;
   total: number;
 }
@@ -158,4 +160,96 @@ export interface CreatedApiKey {
   /** Shown once. */
   key: string;
   connectorUrl: string;
+}
+
+/* ——— Round 4: meet in person, night walks, swaps, diary, push (see CONTRACT4.md) ——— */
+
+/** `GET /api/familiar/[name]/meet-code` (owner). Rotates at 00:00 UTC. */
+export interface MeetCode {
+  code: string;
+  url: string;
+  expiresAt: string;
+}
+
+export interface MeetResult {
+  met: string;
+  reward: { sparks: number; xp: number };
+  newSpecies: boolean;
+  inPerson: true;
+}
+
+export type WalkStatus = "gathering" | "painting" | "done" | "failed";
+
+export interface WalkMember {
+  label: string;
+  species: string;
+  color: string;
+  portraitUrl: string | null;
+}
+
+export interface WalkView {
+  id: string;
+  status: WalkStatus;
+  /** The host's label. */
+  host: string;
+  members: WalkMember[];
+  imageUrl: string | null;
+  createdAt: string;
+  inviteUrl: string;
+  /** Viewer-aware; false when signed out. */
+  canJoin: boolean;
+  canStart: boolean;
+  joined: boolean;
+}
+
+export type TradeStatus = "pending" | "accepted" | "declined" | "cancelled" | "expired";
+
+export interface TradeParty {
+  label: string;
+  species: string;
+  portraitUrl: string | null;
+}
+
+export interface TradeItem {
+  id: string;
+  name: string;
+  art: string;
+}
+
+export interface TradeView {
+  id: string;
+  status: TradeStatus;
+  from: TradeParty;
+  to: TradeParty;
+  /** What the sender gives. */
+  give: TradeItem;
+  /** What the sender wants back. */
+  want: TradeItem;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface TradesResult {
+  incoming: TradeView[];
+  outgoing: TradeView[];
+  history: TradeView[];
+}
+
+export interface DiaryView {
+  /** ISO week, `YYYY-Www`. */
+  week: string;
+  text: string;
+  moodLine: string;
+  days: { date: string; mood: string | null }[];
+  createdAt: string;
+}
+
+export interface DiaryResult {
+  diary: DiaryView | null;
+  canWrite: boolean;
+}
+
+export interface PushSubscriptionInput {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
 }

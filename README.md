@@ -33,6 +33,11 @@ Between visits, the Familiar lives in a little egg-shaped device with an LCD scr
 | **Explore** | An illustrated map of who's out tonight. Tap a Familiar to **spot** it for your Dex (+Sparks, and a bonus for a new species), send it a **gift** once a day (its keeper gets Sparks), or visit its page. |
 | **Dex** | Eight species to find (fox, owl, otter, moth, axolotl, cat, dragonling, bunny), and every Familiar you've met. |
 | **Event spotlights** | Real-world events become in-app events with their own quests and bonuses. Diwali (1–10 Nov) brings a festival collection and lights on every screen. ETHGlobal Mumbai doubles visit Sparks. Devcon 8 has its own quest. |
+| **Lantern Night** | 8 Nov only: every portrait painted that night gets fireworks and sky lanterns, a quest, and a limited badge. |
+| **Meet in person** | Each Familiar has a daily QR code. Scan another keeper's at a meetup and you both get triple Sparks; the code goes stale at midnight UTC. |
+| **Night walks** | Start a walk and share the link. When three Familiars have joined (or two, if the host says go), one shared painting is made with all of them in it, and everyone earns Sparks. |
+| **Swaps** | Offer an accessory you own for one a friend owns. Accepting swaps both items in one transaction; unanswered offers expire after 72 h. |
+| **Diary & pings** | Once a week your Familiar writes a short diary in its own (slightly sassy) voice from that week's nights, never quoting you. Opt in to a phone ping when it's hungry, lonely or sleepy. |
 | **Ember's story** | A six-chapter story of how a Familiar grows, told as a trail on the home page and as a storybook at `/story`. |
 
 ### From ChatGPT or Claude
@@ -137,6 +142,7 @@ Pages:
 - `/f/:name` is the Familiar's home: tonight's visit, the care device, level and Sparks, receipts, feeding, its ENS name and its memories.
 - `/explore`, `/dex`, `/quests` and `/shop` are the game.
 - `/connect` covers ChatGPT & Claude; `/story` is the storybook.
+- `/meet/:name`, `/walk/:id` and `/trades` cover meeting in person, night walks and swaps.
 
 ## Repository
 
@@ -236,6 +242,12 @@ Sessions use an HttpOnly cookie, or `Authorization: Bearer fam_…` for a person
 | GET | `/api/events` | Event spotlights: live, upcoming, recently ended |
 | GET / POST / DELETE | `/api/keys`, `/api/keys/:id` | Personal connector links (cookie session only) |
 | POST / GET / DELETE | `/api/mcp`, `/api/mcp/:key` | MCP server (Streamable HTTP) for ChatGPT and Claude |
+| GET / POST | `/api/familiar/:name/meet-code`, `/api/familiar/:name/meet` | Daily QR code (owner); meet in person with `{ code }` |
+| POST / GET | `/api/walks`, `/api/walks/:id`, `/api/walks/:id/join`, `/api/walks/:id/start` | Night walks (shared painting after the response) |
+| GET | `/api/familiar/:name/walks` | Finished walks a Familiar was in |
+| GET / POST | `/api/trades`, `/api/trades/:id/accept\|decline\|cancel` | Accessory swaps between friends |
+| GET / POST | `/api/familiar/:name/diary` | The weekly diary (owner) |
+| GET / POST / DELETE | `/api/push/key`, `/api/push/subscribe`, `/api/push/test` | Web Push opt-in (VAPID) |
 | GET | `/api/config` | Public client configuration |
 | GET | `/api/health` | Dependency checks and configured integrations |
 | GET | `/api/cron/reconcile` | Retry pending onchain writes (Bearer `CRON_SECRET`) |
@@ -269,8 +281,8 @@ cd app
 cp .env.example .env.local
 pnpm i
 pnpm dev                         # http://localhost:3000; dev database is embedded PGlite in .data/
-pnpm test                        # 86 unit tests
-pnpm test:integration            # 57 end-to-end tests against anvil forks of Sepolia, Base and 0G
+pnpm test                        # 99 unit tests
+pnpm test:integration            # 63 end-to-end tests against anvil forks of Sepolia, Base and 0G
 pnpm build
 ```
 
@@ -311,6 +323,8 @@ The integration suite runs the real route handlers end to end against forks of t
 
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | Reown project id; turns on WalletConnect for mobile wallets |
 | `FESTIVAL`, `NEXT_PUBLIC_FESTIVAL`, `EVENTS_TODAY` | Force the festival on or off, or pin the event clock (tests) |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Web Push for hunger pings (off when unset) |
+| `WALKS_PER_DAY`, `MEDIA_HOSTS` | Daily cap on team-paid walk paintings; extra hosts trusted for `/api/media` images |
 | `BACKEND_URL` | Frontend only: proxy `/api/*` to a separate API server |
 | `MEDIA_DIR`, `INTERNAL_CRON` | API server only: media on a mounted volume, and the reconcile job in-process |
 

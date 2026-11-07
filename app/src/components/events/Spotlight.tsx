@@ -5,6 +5,7 @@ import { ArrowUpRight, MapPin } from "lucide-react";
 import Image from "next/image";
 import { Diya } from "@/components/art/Diwali";
 import { EmberIcon } from "@/components/art/Icons";
+import { SkyLantern } from "@/components/art/Lantern";
 import { Skeleton } from "@/components/ui/card";
 import { cn } from "@/components/ui/cn";
 import { api } from "@/lib/api";
@@ -65,6 +66,8 @@ export function EventLogo({ event, size = "md" }: { event: EventView; size?: "sm
     <span className={cn("inline-flex shrink-0 items-center justify-center rounded-2xl bg-white shadow-sticker", h)}>
       {event.logo ? (
         <Image src={event.logo} alt={`${event.name} logo`} width={120} height={40} unoptimized className={cn("w-auto object-contain", size === "sm" ? "h-5 max-w-20" : "h-7 max-w-32")} />
+      ) : event.id === "lantern-night" ? (
+        <SkyLantern className={size === "sm" ? "h-7" : "h-9"} />
       ) : (
         <Diya className={size === "sm" ? "size-7" : "size-9"} />
       )}

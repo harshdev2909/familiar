@@ -14,14 +14,22 @@ describe("event spotlights", () => {
       ["devcon-8", "live"],
       ["ethglobal-mumbai", "live"],
       ["diwali-2026", "live"],
+      ["lantern-night", "upcoming"],
     ]);
     expect(eventViews("2026-11-04").map((e) => [e.id, e.status])).toEqual([
       ["devcon-8", "live"],
       ["diwali-2026", "live"],
       ["ethglobal-mumbai", "upcoming"],
+      ["lantern-night", "upcoming"],
     ]);
-    expect(eventViews("2026-10-01").map((e) => e.status)).toEqual(["upcoming", "upcoming", "upcoming"]);
-    expect(eventViews("2026-11-20").map((e) => e.id)).toEqual(["diwali-2026", "ethglobal-mumbai", "devcon-8"]);
+    expect(eventViews("2026-11-08").map((e) => [e.id, e.status])).toEqual([
+      ["lantern-night", "live"],
+      ["diwali-2026", "live"],
+      ["ethglobal-mumbai", "ended"],
+      ["devcon-8", "ended"],
+    ]);
+    expect(eventViews("2026-10-01").map((e) => e.status)).toEqual(["upcoming", "upcoming", "upcoming", "upcoming"]);
+    expect(eventViews("2026-11-20").map((e) => e.id)).toEqual(["diwali-2026", "lantern-night", "ethglobal-mumbai", "devcon-8"]);
     expect(eventViews("2026-11-23").map((e) => e.id)).toEqual(["diwali-2026"]);
     expect(eventViews("2026-12-30")).toEqual([]);
   });

@@ -54,3 +54,23 @@ export const TONE_CLASS: Record<Tone, { bg: string; ink: string; ring: string; s
 };
 
 export const CARE_ART = { snack: "/art/care/snack.jpg", pet: "/art/care/pet.jpg", play: "/art/care/play.jpg", sleepy: "/art/care/sleepy.jpg" } as const;
+
+/** A tone's ink as a border colour (the catch rings). */
+export const RING_BORDER: Record<Tone, string> = {
+  blush: "border-blush-ink",
+  mint: "border-mint-ink",
+  butter: "border-butter-ink",
+  lilac: "border-lilac-ink",
+  sky: "border-sky-ink",
+  peach: "border-peach-ink",
+};
+
+/** Round 4 illustrations (watercolor, generated on 0G Seedream). */
+export const ROUND4 = {
+  lanternNight: "/art/round4/lantern-night.jpg",
+  walk: "/art/round4/walk.jpg",
+  swap: "/art/round4/swap.jpg",
+  diary: "/art/round4/diary.jpg",
+  meet: "/art/round4/meet.jpg",
+  hungryPing: "/art/round4/hungry-ping.jpg",
+} as const;

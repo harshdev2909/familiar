@@ -8,6 +8,8 @@ import { Diya } from "@/components/art/Diwali";
 import { EmberIcon, HeartIcon, MoonIcon, SealIcon } from "@/components/art/Icons";
 import { Star } from "@/components/art/Doodles";
 import { Bunting, GiftBox } from "@/components/art/Handmade";
+import { SkyLantern } from "@/components/art/Lantern";
+import Link from "next/link";
 import { SignInDialog } from "@/components/SignIn";
 import { EventStrip } from "@/components/events/Spotlight";
 import { Button, ButtonLink } from "@/components/ui/button";
@@ -25,6 +27,17 @@ const BADGE_ICON: Record<string, React.ReactNode> = {
   sprite: <Star className="size-6" />,
   guardian: <SealIcon className="size-6" />,
   "diwali-2026": <Diya className="size-8" />,
+  "lantern-night-2026": <SkyLantern className="h-10" />,
+};
+
+/** Limited badges get the night-sky treatment, earned or not: you can only get them once. */
+const LIMITED: Record<string, string> = { "lantern-night-2026": "8 Nov only" };
+
+/** Quests with somewhere to go, so the next step is one tap away. */
+const QUEST_LINK: Record<string, { href: (label: string) => string; text: string }> = {
+  "hackathon-meet": { href: (l) => `/f/${l}#meet`, text: "Show your meet code" },
+  "daily-walk": { href: (l) => `/f/${l}#walks`, text: "Start a walk" },
+  "lantern-night-visit": { href: (l) => `/f/${l}`, text: "Visit tonight" },
 };
 
 export function QuestsScreen() {
@@ -154,11 +167,20 @@ export function QuestsScreen() {
                   {g.title}
                 </h2>
                 <ul className="grid gap-3">
-                  {list.map((quest) => (
-                    <li key={quest.id} className="flex items-center gap-4 rounded-2xl border border-border bg-card p-4 shadow-soft">
+                  {list.map((quest) => {
+                    const lantern = quest.id.startsWith("lantern-night");
+                    const link = QUEST_LINK[quest.id];
+                    return (
+                    <li key={quest.id} className={cn("flex items-center gap-4 rounded-2xl border bg-card p-4 shadow-soft", lantern ? "border-butter-ink/40 ring-2 ring-butter" : "border-border")}>
+                      {lantern && <SkyLantern className="h-11 shrink-0" />}
                       <div className="min-w-0 flex-1">
                         <p className="font-medium">{quest.title}</p>
                         <p className="text-sm text-muted-foreground">{quest.description}</p>
+                        {link && familiar && !quest.claimed && !quest.claimable && (
+                          <Link href={link.href(familiar.label)} className="mt-1 inline-flex h-8 items-center text-sm text-primary underline-offset-4 hover:underline">
+                            {link.text}
+                          </Link>
+                        )}
                         <div className="mt-2 flex items-center gap-3">
                           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
                             <div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${(quest.progress / quest.goal) * 100}%` }} />
@@ -178,7 +200,8 @@ export function QuestsScreen() {
                         </Button>
                       )}
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               </section>
             );
@@ -191,12 +214,25 @@ export function QuestsScreen() {
               <GiftBox className="size-7" /> Badges
             </h2>
             <ul className="grid grid-cols-3 gap-3 sm:grid-cols-5">
-              {data.badges.map((b) => (
-                <li key={b.id} className={cn("flex flex-col items-center gap-2 rounded-2xl border p-4 text-center", b.earned ? "border-primary/30 bg-wash text-primary" : "border-dashed border-border text-muted-foreground")}>
-                  <span className="grid size-12 place-items-center">{b.earned ? BADGE_ICON[b.id] : <Lock className="size-5" aria-hidden />}</span>
-                  <span className={cn("text-xs font-medium", b.earned ? "text-foreground" : "")}>{b.name}</span>
-                </li>
-              ))}
+              {data.badges.map((b) =>
+                LIMITED[b.id] ? (
+                  <li key={b.id} className={cn("relative col-span-2 flex items-center gap-3 overflow-hidden rounded-2xl bg-[#141632] p-4 text-[#f6efe6]", b.earned && "ring-2 ring-[#f3c58a]")}>
+                    <span className={cn("grid size-12 shrink-0 place-items-center", !b.earned && "opacity-60")}>
+                      <SkyLantern className="h-11" lit={b.earned} />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium">{b.name}</span>
+                      <span className="block text-xs text-[#f6efe6]/70">{b.earned ? "Yours. Forever. Show-off." : `Limited · ${LIMITED[b.id]}`}</span>
+                    </span>
+                    {!b.earned && <Lock className="ml-auto size-4 shrink-0 text-[#f6efe6]/60" aria-label="Not earned yet" />}
+                  </li>
+                ) : (
+                  <li key={b.id} className={cn("flex flex-col items-center gap-2 rounded-2xl border p-4 text-center", b.earned ? "border-primary/30 bg-wash text-primary" : "border-dashed border-border text-muted-foreground")}>
+                    <span className="grid size-12 place-items-center">{b.earned ? BADGE_ICON[b.id] : <Lock className="size-5" aria-hidden />}</span>
+                    <span className={cn("text-xs font-medium", b.earned ? "text-foreground" : "")}>{b.name}</span>
+                  </li>
+                ),
+              )}
             </ul>
           </section>
         )}

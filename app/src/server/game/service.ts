@@ -12,7 +12,7 @@ import { REWARDS, isoWeek, levelFor } from "./progress";
 import { eventById, eventWindow, eventsToday, isLive } from "./events";
 
 type FamiliarRow = typeof schema.familiars.$inferSelect;
-type Tx = Parameters<Parameters<DB["transaction"]>[0]>[0];
+export type Tx = Parameters<Parameters<DB["transaction"]>[0]>[0];
 
 export const festival = () => activeFestival(utcDate(), env().FESTIVAL);
 
@@ -167,6 +167,14 @@ export interface QuestView {
   period: string;
 }
 
+export interface BadgeView {
+  id: string;
+  name: string;
+  earned: boolean;
+  /** Only obtainable during a limited-time event. */
+  limited: boolean;
+}
+
 /** First row's `n` of a count query (quest progress; the queries run in one parallel round). */
 const countOf = async (q: Promise<{ n: number }[]>) => Number((await q)[0]?.n ?? 0);
 
@@ -179,7 +187,11 @@ async function questState(f: FamiliarRow) {
   const devcon = isLive("devcon-8", eToday) ? eventWindow(eventById("devcon-8"), eToday) : null;
   const dayStart = new Date(`${today}T00:00:00Z`);
   const zero = Promise.resolve([{ n: 0 }]);
-  const [spotsToday, giftsToday, hackathonSpots, devconVisits] = await Promise.all([
+  // Lantern Night: the quest runs while it's live; the limited badge is earned by any visit on the night.
+  const lantern = eventWindow(eventById("lantern-night"), eToday);
+  const lanternLive = isLive("lantern-night", eToday);
+  const okVisit = inArray(schema.visits.status, ["chain_pending", "complete"]);
+  const [spotsToday, giftsToday, hackathonSpots, devconVisits, lanternVisits, hackathonMeets, walksToday] = await Promise.all([
     countOf(d.select({ n: count() }).from(schema.sightings).where(and(eq(schema.sightings.spotterFamiliarId, f.id), gte(schema.sightings.createdAt, dayStart)))),
     countOf(d.select({ n: count() }).from(schema.gifts).where(and(eq(schema.gifts.fromFamiliarId, f.id), eq(schema.gifts.utcDate, today)))),
     countOf(
@@ -195,8 +207,36 @@ async function questState(f: FamiliarRow) {
         ? d
             .select({ n: count() })
             .from(schema.visits)
-            .where(and(eq(schema.visits.familiarId, f.id), gte(schema.visits.utcDate, devcon.fromDate), lte(schema.visits.utcDate, devcon.toDate), inArray(schema.visits.status, ["chain_pending", "complete"])))
+            .where(and(eq(schema.visits.familiarId, f.id), gte(schema.visits.utcDate, devcon.fromDate), lte(schema.visits.utcDate, devcon.toDate), okVisit))
         : zero,
+    ),
+    countOf(
+      d
+        .select({ n: count() })
+        .from(schema.visits)
+        .where(and(eq(schema.visits.familiarId, f.id), gte(schema.visits.utcDate, lantern.fromDate), lte(schema.visits.utcDate, lantern.toDate), okVisit)),
+    ),
+    countOf(
+      hackathon
+        ? d
+            .select({ n: count() })
+            .from(schema.sightings)
+            .where(
+              and(
+                eq(schema.sightings.spotterFamiliarId, f.id),
+                eq(schema.sightings.inPerson, true),
+                gte(schema.sightings.metAt, hackathon.from),
+                lt(schema.sightings.metAt, hackathon.to),
+              ),
+            )
+        : zero,
+    ),
+    countOf(
+      d
+        .select({ n: count() })
+        .from(schema.walkMembers)
+        .innerJoin(schema.walks, eq(schema.walks.id, schema.walkMembers.walkId))
+        .where(and(eq(schema.walkMembers.familiarId, f.id), eq(schema.walks.utcDate, today), eq(schema.walks.status, "done"))),
     ),
   ]);
   const caredToday = [f.lastPetAt, f.lastSnackAt, f.lastPlayAt].filter((t) => t && utcDate(t) === today).length;
@@ -222,10 +262,17 @@ async function questState(f: FamiliarRow) {
     { id: "daily-spot", kind: "daily", title: "Out exploring", description: "Spot another Familiar on the map.", progress: Math.min(spotsToday, 1), goal: 1, reward: 10, period: today },
     { id: "daily-gift", kind: "daily", title: "A little gift", description: "Send a gift to a Familiar you've spotted.", progress: Math.min(giftsToday, 1), goal: 1, reward: 10, period: today },
     { id: "daily-care", kind: "daily", title: "Full care", description: `Pet, play with and feed ${f.label} a snack today.`, progress: caredToday, goal: 3, reward: 15, period: today },
+    { id: "daily-walk", kind: "daily", title: "A night walk", description: "Host or join a night walk that gets painted today.", progress: Math.min(walksToday, 1), goal: 1, reward: 20, period: today },
     { id: "weekly-streak", kind: "weekly", title: "Three nights in a row", description: "Visit three nights running.", progress: Math.min(f.streak, 3), goal: 3, reward: 40, period: week },
   ];
   if (hackathon) {
-    defs.push({ id: "hackathon-spot", kind: "event", title: "Hacker meetup", description: "Spot three Familiars during ETHGlobal Mumbai.", progress: Math.min(hackathonSpots, 3), goal: 3, reward: 60, period: "ethglobal-mumbai" });
+    defs.push(
+      { id: "hackathon-spot", kind: "event", title: "Hacker meetup", description: "Spot three Familiars during ETHGlobal Mumbai.", progress: Math.min(hackathonSpots, 3), goal: 3, reward: 60, period: "ethglobal-mumbai" },
+      { id: "hackathon-meet", kind: "event", title: "Say hi in person", description: "Meet a Familiar in person (scan its QR code) during ETHGlobal Mumbai.", progress: Math.min(hackathonMeets, 1), goal: 1, reward: 40, period: "ethglobal-mumbai" },
+    );
+  }
+  if (lanternLive) {
+    defs.push({ id: "lantern-night-visit", kind: "event", title: "Lantern Night", description: "Visit on Lantern Night — fireworks in every portrait.", progress: Math.min(lanternVisits, 1), goal: 1, reward: 50, period: "lantern-night" });
   }
   if (devcon) {
     defs.push({ id: "devcon-visit", kind: "event", title: "A Devcon night", description: "Visit during Devcon 8.", progress: Math.min(devconVisits, 1), goal: 1, reward: 40, period: "devcon-8" });
@@ -241,12 +288,13 @@ async function questState(f: FamiliarRow) {
     const claimed = claimedKey.has(`${q.id}@${q.period}`);
     return { ...q, claimed, claimable: !claimed && q.progress >= q.goal };
   });
-  const badges = [
-    { id: "first-night", name: "First night", earned: f.day >= 1 },
-    { id: "week-of-nights", name: "Seven nights", earned: f.streak >= 7 },
-    { id: "sprite", name: "Sprite", earned: f.day >= 7 },
-    { id: "guardian", name: "Guardian", earned: f.day >= 14 },
-    { id: "diwali-2026", name: "Diwali 2026", earned: claims.some((c) => c.questId === "diwali-collect" && c.period === "diwali-2026") },
+  const badges: BadgeView[] = [
+    { id: "first-night", name: "First night", earned: f.day >= 1, limited: false },
+    { id: "week-of-nights", name: "Seven nights", earned: f.streak >= 7, limited: false },
+    { id: "sprite", name: "Sprite", earned: f.day >= 7, limited: false },
+    { id: "guardian", name: "Guardian", earned: f.day >= 14, limited: false },
+    { id: "diwali-2026", name: "Diwali 2026", earned: claims.some((c) => c.questId === "diwali-collect" && c.period === "diwali-2026"), limited: true },
+    { id: "lantern-night-2026", name: "Lantern Night 2026", earned: lanternVisits > 0, limited: true },
   ];
   return { quests, badges, festival: fest };
 }

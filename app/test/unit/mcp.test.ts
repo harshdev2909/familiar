@@ -41,7 +41,7 @@ describe("MCP server", () => {
     const list = await rpc({ urlKey: created.key }, "tools/list");
     const names = list.body.result.tools.map((t: { name: string }) => t.name);
     expect(names).toEqual(
-      expect.arrayContaining(["familiar_status", "talk_to_familiar", "care_for_familiar", "spin_lantern", "list_shop", "buy_item", "wear_item", "list_quests", "claim_quest", "explore_nearby", "spot_familiar", "list_events"]),
+      expect.arrayContaining(["familiar_status", "talk_to_familiar", "care_for_familiar", "spin_lantern", "list_shop", "buy_item", "wear_item", "list_quests", "claim_quest", "explore_nearby", "spot_familiar", "list_events", "start_night_walk", "list_trades", "read_diary"]),
     );
     const talk = list.body.result.tools.find((t: { name: string }) => t.name === "talk_to_familiar");
     expect(talk.description).toMatch(/Once per night/);

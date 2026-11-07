@@ -54,6 +54,8 @@ export interface PipelineInput {
   body?: string;
   /** Accessory phrases for what it's wearing tonight. */
   wearing?: string[];
+  /** Appended to the image prompt (e.g. Lantern Night fireworks). */
+  promptSuffix?: string;
   memory: string;
   /** Voice note; omitted for a wake-up without speech. */
   audio?: { blob: Blob; filename: string };
@@ -102,7 +104,7 @@ export async function runPipeline(p: PipelineInput): Promise<PipelineOutput> {
 
   const thought = await think(p, transcript, keep);
 
-  const imagePrompt = imagePromptFor(p.styleSeed, p.stage, thought.image_prompt, p.wearing);
+  const imagePrompt = `${imagePromptFor(p.styleSeed, p.stage, thought.image_prompt, p.wearing)}${p.promptSuffix ?? ""}`;
   // Portrait and spoken reply are independent: run them together.
   const [drawn, spoken] = await Promise.all([draw(p, imagePrompt), p.speak ? speak(p, thought.reply) : Promise.resolve(null)]);
   await keep(drawn.receipt);

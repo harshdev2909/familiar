@@ -14,6 +14,12 @@ import { Receipts } from "@/components/familiar/Receipts";
 import { MicButton } from "@/components/MicButton";
 import { InputModeToggle, TypeBox } from "@/components/TypeBox";
 import { CarePanel } from "@/components/familiar/CarePanel";
+import { DiaryCard } from "@/components/familiar/DiaryCard";
+import { MeetCard } from "@/components/familiar/MeetCard";
+import { PushToggle } from "@/components/familiar/PushToggle";
+import { LanternNightNote, useLanternNight } from "@/components/events/LanternNight";
+import { LanternSky } from "@/components/art/Lantern";
+import { WalkCard, WalksStrip } from "@/components/walks/walks";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Pill } from "@/components/ui/card";
 import { cn } from "@/components/ui/cn";
@@ -84,6 +90,7 @@ export function FamiliarScreen({ params }: { params: Promise<{ name: string }> }
   const [forgetOpen, setForgetOpen] = useState(false);
   const [galleryKey, setGalleryKey] = useState(0);
   const [waking, setWaking] = useState(false);
+  const lantern = useLanternNight();
 
   const fq = useQuery({ queryKey: ["familiar", name], queryFn: () => api.familiar(name), retry: (n, e) => !isApiError(e, "NOT_FOUND") && n < 2 });
   const familiar = fq.data?.familiar ?? null;
@@ -177,6 +184,7 @@ export function FamiliarScreen({ params }: { params: Promise<{ name: string }> }
       {/* Phone: device → tonight → needs. Desktop: device + needs on the left, tonight on the right. */}
       <section className="mx-auto grid max-w-6xl gap-6 px-5 pb-12 pt-4 md:grid-cols-[1.1fr_1fr] md:grid-rows-[auto_1fr] md:gap-8 md:pt-10">
         <div className="relative mx-auto w-full max-w-[340px] md:col-start-1 md:row-start-1 md:max-w-[500px]">
+        {lantern.live && !familiar.dormant && <LanternSky count={5} className="-left-4 -right-4 -top-4 bottom-1/3 md:-left-10 md:-right-10" />}
         {familiar.festival && !familiar.dormant && <Diya className="absolute bottom-[6%] left-[4%] z-10 size-14 drop-shadow-sm md:size-16" />}
         <Device
           image={portrait}
@@ -187,6 +195,7 @@ export function FamiliarScreen({ params }: { params: Promise<{ name: string }> }
         />
         </div>
         <div className="order-3 flex flex-col gap-5 md:order-none md:col-start-1 md:row-start-2">
+          <LanternNightNote />
           {isOwner && <CarePanel familiar={familiar} onFamiliar={setFamiliar} />}
           <div className="flex flex-col gap-5 rounded-2xl border border-border bg-card/70 p-5 backdrop-blur-sm">
             <div className="flex flex-wrap items-center gap-2">
@@ -261,6 +270,19 @@ export function FamiliarScreen({ params }: { params: Promise<{ name: string }> }
           {shown && isOwner && <Receipts visit={polled ?? shown} />}
         </div>
       </section>
+
+      {isOwner && (
+        <section className="mx-auto grid max-w-6xl items-start gap-6 px-5 pb-12 md:grid-cols-[1.5fr_1fr]" aria-label="Diary and friends">
+          <DiaryCard name={familiar.label} />
+          <div className="flex flex-col gap-4">
+            <MeetCard name={familiar.label} />
+            <WalkCard />
+            <PushToggle name={familiar.label} />
+          </div>
+        </section>
+      )}
+
+      <WalksStrip name={familiar.label} isOwner={isOwner} />
 
       <section className="mx-auto grid max-w-6xl gap-8 px-5 pb-20 md:grid-cols-[1fr_1.6fr]">
         <div className="flex flex-col gap-3">

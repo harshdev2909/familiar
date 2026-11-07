@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Gift } from "lucide-react";
+import { ArrowLeftRight, Gift, Handshake } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
@@ -10,10 +10,12 @@ import { Cloud, PawTrail } from "@/components/art/Handmade";
 import { Avatar } from "@/components/explore/Avatar";
 import { useGift } from "@/components/explore/social";
 import { SignInDialog } from "@/components/SignIn";
+import { ProposeSwapDialog } from "@/components/trades/ProposeSwap";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/card";
 import { cn } from "@/components/ui/cn";
 import { api } from "@/lib/api";
+import type { DexResult } from "@/lib/api-types";
 import { TONE_CLASS, speciesName, toneOf } from "@/lib/art";
 import { useNow } from "@/lib/browser";
 import { useSession } from "@/lib/session";
@@ -29,6 +31,7 @@ export function DexScreen() {
   const now = useNow();
   const gift = useGift();
   const [signIn, setSignIn] = useState(false);
+  const [swapWith, setSwapWith] = useState<DexResult["spotted"][number] | null>(null);
   const q = useQuery({ queryKey: ["dex", session?.address ?? null], queryFn: api.dex, enabled: Boolean(session) });
 
   if (!loading && !session)
@@ -122,14 +125,24 @@ export function DexScreen() {
             {data.spotted.map((f) => (
               <li key={f.label} className="flex items-center gap-3 rounded-bubble border border-border bg-card p-3 shadow-soft">
                 <Link href={`/f/${f.label}`} className="flex min-w-0 flex-1 items-center gap-3 rounded-bubble">
-                  <Avatar species={f.species} portraitUrl={f.portraitUrl} size={48} />
+                  <span className="relative shrink-0">
+                    <Avatar species={f.species} portraitUrl={f.portraitUrl} size={48} />
+                    {f.metInPerson && (
+                      <span className="absolute -bottom-1 -right-1 grid size-5 place-items-center rounded-full bg-butter text-butter-ink shadow-sticker" aria-hidden>
+                        <Handshake className="size-3" strokeWidth={2.5} />
+                      </span>
+                    )}
+                  </span>
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{f.label}</span>
                     <span className="block truncate text-sm text-muted-foreground">
-                      {speciesName(f.species)} · spotted {ago(f.spottedAt, now)}
+                      {speciesName(f.species)} · {f.metInPerson ? "met in person" : "spotted"} {ago(f.spottedAt, now)}
                     </span>
                   </span>
                 </Link>
+                <Button size="sm" variant="ghost" onClick={() => setSwapWith(f)} aria-label={`Propose a swap with ${f.label}`} className="h-10 w-10 px-0">
+                  <ArrowLeftRight className="size-4" aria-hidden />
+                </Button>
                 <Button
                   size="sm"
                   variant={f.giftedToday ? "ghost" : "secondary"}
@@ -146,6 +159,7 @@ export function DexScreen() {
           </ul>
         )}
       </section>
+      <ProposeSwapDialog key={swapWith?.label ?? "none"} to={swapWith} open={Boolean(swapWith)} onClose={() => setSwapWith(null)} />
     </div>
   );
 }

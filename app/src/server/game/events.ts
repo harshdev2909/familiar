@@ -6,7 +6,7 @@ import { utcDate } from "../familiar/rules";
  * Bonuses are applied server-side (visit multiplier, event quests); the copy here is what the UI shows.
  */
 export interface EventDef {
-  id: "devcon-8" | "ethglobal-mumbai" | "diwali-2026";
+  id: "devcon-8" | "ethglobal-mumbai" | "diwali-2026" | "lantern-night";
   name: string;
   place: string;
   start: string;
@@ -58,6 +58,19 @@ export const EVENTS: readonly EventDef[] = [
     url: null,
     blurb: "The festival of lights. Diyas, marigolds and sweets in the shop.",
     bonus: "Festival accessories and Diwali quests",
+    visitSparksMultiplier: 1,
+  },
+  {
+    id: "lantern-night",
+    name: "Lantern Night",
+    place: "Everywhere",
+    start: "2026-11-08",
+    end: "2026-11-08",
+    logo: null,
+    art: "/art/events/lantern-night.jpg",
+    url: null,
+    blurb: "The night of Diwali itself. Every sky fills with fireworks and paper lanterns — visit and your Familiar's portrait does too.",
+    bonus: "Every portrait gets fireworks · limited badge",
     visitSparksMultiplier: 1,
   },
 ];
@@ -116,3 +129,9 @@ export function eventWindow(e: Pick<EventDef, "start" | "end">, today = eventsTo
   const to = new Date(Date.parse(`${e.end}T00:00:00Z`) + DAY_MS - shift);
   return { from, to, fromDate: utcDate(from), toDate: utcDate(new Date(to.getTime() - DAY_MS)) };
 }
+
+/** Painted into every visit portrait while Lantern Night is live. */
+export const LANTERN_NIGHT_SKY = ", the night sky behind it full of Diwali fireworks and floating paper sky lanterns";
+
+/** Extra words for tonight's visit image prompt from live events ("" on ordinary nights). */
+export const eventImagePromptSuffix = (today = eventsToday()) => (isLive("lantern-night", today) ? LANTERN_NIGHT_SKY : "");

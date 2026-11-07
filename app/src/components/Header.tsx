@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { BookHeart, ChevronDown, LogOut, MessagesSquare } from "lucide-react";
+import { ArrowLeftRight, BookHeart, ChevronDown, LogOut, MessagesSquare } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -51,9 +51,17 @@ function CreditsPill() {
   );
 }
 
+/** Pending swap offers waiting on you (0 when signed out, without a Familiar, or offline). */
+function useIncomingSwaps() {
+  const { familiar } = useSession();
+  const q = useQuery({ queryKey: ["trades"], queryFn: api.trades, enabled: Boolean(familiar), refetchInterval: 120_000, retry: false, staleTime: 60_000 });
+  return q.data?.incoming.filter((t) => t.status === "pending").length ?? 0;
+}
+
 function AccountMenu() {
   const { session, familiar, signOut } = useSession();
   const [open, setOpen] = useState(false);
+  const swaps = useIncomingSwaps();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -74,9 +82,15 @@ function AccountMenu() {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-card pl-1 pr-2.5 text-sm hover:bg-accent"
+        aria-label={`Account${swaps ? `, ${swaps} swap offer${swaps === 1 ? "" : "s"} waiting` : ""}`}
+        className="relative inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-card pl-1 pr-2.5 text-sm hover:bg-accent"
       >
         <span className="grid size-7 place-items-center rounded-full bg-primary text-[11px] font-semibold uppercase text-primary-foreground">{(familiar?.label ?? session.address.slice(2)).slice(0, 2)}</span>
+        {swaps > 0 && (
+          <span className="absolute -right-1 -top-1 grid h-4.5 min-w-4.5 place-items-center rounded-full bg-blush-ink px-1 text-[10px] font-semibold tabular-nums leading-none text-card ring-2 ring-background" aria-hidden>
+            {swaps > 9 ? "9+" : swaps}
+          </span>
+        )}
         <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />
       </button>
       {open && (
@@ -98,6 +112,12 @@ function AccountMenu() {
           <Link role="menuitem" href="/dex" onClick={() => setOpen(false)} className="flex h-10 items-center gap-2 rounded-xl px-3 text-sm hover:bg-accent">
             <BookHeart className="size-4 text-muted-foreground" aria-hidden /> Dex
           </Link>
+          {familiar && (
+            <Link role="menuitem" href="/trades" onClick={() => setOpen(false)} className="flex h-10 items-center gap-2 rounded-xl px-3 text-sm hover:bg-accent">
+              <ArrowLeftRight className="size-4 text-muted-foreground" aria-hidden /> Swaps
+              {swaps > 0 && <span className="ml-auto rounded-full bg-blush px-2 py-0.5 font-mono text-[11px] text-blush-ink">{swaps} new</span>}
+            </Link>
+          )}
           <Link role="menuitem" href="/connect" onClick={() => setOpen(false)} className="flex h-10 items-center gap-2 rounded-xl px-3 text-sm hover:bg-accent">
             <MessagesSquare className="size-4 text-muted-foreground" aria-hidden /> ChatGPT &amp; Claude
           </Link>

@@ -34,6 +34,8 @@ const PNG_1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8B
 /** OpenAI-compatible 0G Router stand-in that mimics x_0g_trace + X-Request-ID. */
 export async function mockZeroG(o: { privyWallet: () => Address }) {
   const calls: Recorded[] = [];
+  /** Paths whose next call fails once with this HTTP status (failure-path tests). */
+  const failures = new Map<string, number>();
   let n = 0;
   const server = createServer(async (req, res) => {
     const raw = await readBody(req);
@@ -46,9 +48,21 @@ export async function mockZeroG(o: { privyWallet: () => Address }) {
       res.writeHead(status, { "content-type": "application/json", "x-request-id": id });
       res.end(JSON.stringify(body));
     };
+    const fail = failures.get(path);
+    if (fail) {
+      failures.delete(path);
+      return send(fail, { error: { code: "mock_failure", message: `injected ${fail}` } });
+    }
     if (path === "/auth/privy") return send(200, { token: "zg-user-session-jwt", wallet_address: o.privyWallet() });
     if (path === "/account/balance") return send(200, { credit_balance: "1271000", deposit_balance: "0", total_balance: "1271000", pending_charge: "0", currency: "usd" });
     if (path === "/audio/transcriptions") return send(200, { text: "Rough day. Our demo broke twice but we fixed it at 3am.", x_0g_trace: trace });
+    if (path === "/chat/completions" && JSON.stringify(calls.at(-1)?.body ?? "").includes("diary entry")) {
+      const content = JSON.stringify({
+        text: `Dear diary, my human kept showing up this week (call ${n}). They fix broken things at 3am and pretend it's normal. I pretend not to be impressed. I am.`,
+        mood_line: "Proud, a little sleepy, mostly smug.",
+      });
+      return send(200, { id: `chat-${id}`, choices: [{ message: { role: "assistant", content } }], x_0g_trace: trace });
+    }
     if (path === "/chat/completions") {
       const content = JSON.stringify({
         mood: "proud",
@@ -73,7 +87,7 @@ export async function mockZeroG(o: { privyWallet: () => Address }) {
     send(404, { error: { code: "not_found", message: path } });
   });
   const url = await listen(server);
-  return { url: `${url}/v1`, calls, close: () => server.close() };
+  return { url: `${url}/v1`, calls, failNext: (path: string, status = 500) => void failures.set(path, status), close: () => server.close() };
 }
 
 /**

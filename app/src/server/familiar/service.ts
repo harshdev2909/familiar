@@ -16,7 +16,7 @@ import { COLORS, SPECIES, defaultLook, isEvolutionDay, nextStreak, stageFor, sty
 import { familiarView, galleryView, visitView } from "./views";
 import { grant, wearing } from "../game/service";
 import { REWARDS, levelFor, visitSparks } from "../game/progress";
-import { visitSparksMultiplier } from "../game/events";
+import { eventImagePromptSuffix, visitSparksMultiplier } from "../game/events";
 
 type FamiliarRow = typeof schema.familiars.$inferSelect;
 type VisitRow = typeof schema.visits.$inferSelect;
@@ -354,6 +354,7 @@ async function runVisit(r: RunVisit) {
       styleSeed: f.styleSeed,
       body: `a small ${f.color} ${f.species} ${stageFor(day)}${wearing(f.equipped).length ? `, ${wearing(f.equipped).join(", ")}` : ""}`,
       wearing: wearing(f.equipped),
+      promptSuffix: eventImagePromptSuffix(),
       memory,
       audio: r.said.audio,
       text: r.said.text,

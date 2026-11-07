@@ -6,6 +6,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -68,6 +69,8 @@ export const familiars = pgTable(
     lastPetAt: timestamp("last_pet_at", { withTimezone: true }),
     lastSnackAt: timestamp("last_snack_at", { withTimezone: true }),
     lastPlayAt: timestamp("last_play_at", { withTimezone: true }),
+    /** Last "I need you" push sent to the owner (at most one per 12 h). */
+    lastNeedPushAt: timestamp("last_need_push_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -227,6 +230,9 @@ export const sightings = pgTable(
     spottedFamiliarId: uuid("spotted_familiar_id")
       .notNull()
       .references(() => familiars.id, { onDelete: "cascade" }),
+    /** Met in person (scanned the other Familiar's daily QR code). */
+    inPerson: boolean("in_person").notNull().default(false),
+    metAt: timestamp("met_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("sightings_pair_uq").on(t.spotterFamiliarId, t.spottedFamiliarId), index("sightings_spotted_idx").on(t.spottedFamiliarId)],
@@ -247,6 +253,95 @@ export const gifts = pgTable(
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("gifts_pair_day_uq").on(t.fromFamiliarId, t.toFamiliarId, t.utcDate), index("gifts_to_idx").on(t.toFamiliarId)],
+);
+
+/** Night walks: up to three Familiars painted together in one team-paid Seedream portrait. */
+export const walks = pgTable(
+  "walks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    hostFamiliarId: uuid("host_familiar_id")
+      .notNull()
+      .references(() => familiars.id, { onDelete: "cascade" }),
+    status: text("status", { enum: ["gathering", "painting", "done", "failed"] }).notNull().default("gathering"),
+    imageUrl: text("image_url"),
+    /** UTC day the walk belongs to (caps and joins are per day). */
+    utcDate: text("utc_date").notNull(),
+    /** When painting began (the cron fails walks stuck painting for too long). */
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    /** 0G Router request id of the painting. */
+    requestId: text("request_id"),
+    createdAt: createdAt(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [index("walks_host_day_idx").on(t.hostFamiliarId, t.utcDate), index("walks_status_idx").on(t.status), index("walks_day_idx").on(t.utcDate)],
+);
+
+export const walkMembers = pgTable(
+  "walk_members",
+  {
+    walkId: uuid("walk_id")
+      .notNull()
+      .references(() => walks.id, { onDelete: "cascade" }),
+    familiarId: uuid("familiar_id")
+      .notNull()
+      .references(() => familiars.id, { onDelete: "cascade" }),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ name: "walk_members_pk", columns: [t.walkId, t.familiarId] }), index("walk_members_familiar_idx").on(t.familiarId)],
+);
+
+/** Accessory swaps between Familiars that know each other. */
+export const trades = pgTable(
+  "trades",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    fromFamiliarId: uuid("from_familiar_id")
+      .notNull()
+      .references(() => familiars.id, { onDelete: "cascade" }),
+    toFamiliarId: uuid("to_familiar_id")
+      .notNull()
+      .references(() => familiars.id, { onDelete: "cascade" }),
+    giveItem: text("give_item").notNull(),
+    wantItem: text("want_item").notNull(),
+    status: text("status", { enum: ["pending", "accepted", "declined", "cancelled", "expired"] }).notNull().default("pending"),
+    createdAt: createdAt(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [index("trades_from_idx").on(t.fromFamiliarId, t.status), index("trades_to_idx").on(t.toFamiliarId, t.status)],
+);
+
+/** A weekly diary entry written by the Familiar (ISO week, e.g. 2026-W45). */
+export const diaries = pgTable(
+  "diaries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    familiarId: uuid("familiar_id")
+      .notNull()
+      .references(() => familiars.id, { onDelete: "cascade" }),
+    week: text("week").notNull(),
+    text: text("text").notNull(),
+    moodLine: text("mood_line").notNull(),
+    /** When this text was written (a regeneration moves it forward). */
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("diaries_familiar_week_uq").on(t.familiarId, t.week)],
+);
+
+/** Web Push subscriptions (one per browser endpoint), keyed by the owner's address. */
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Lowercased owner address. */
+    owner: text("owner").notNull(),
+    endpoint: text("endpoint").notNull().unique(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    createdAt: createdAt(),
+    lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
+  },
+  (t) => [index("push_subscriptions_owner_idx").on(t.owner)],
 );
 
 /** Personal API keys (`fam_…`) for ChatGPT / Claude connectors. Only the SHA-256 is stored. */

@@ -88,6 +88,15 @@ const schema = z.object({
   AGENT_MIN_BALANCE_SEPOLIA: z.coerce.number().default(0.01),
   AGENT_MIN_BALANCE_ZG: z.coerce.number().default(0.1),
 
+  /** Night walks (team-paid shared paintings) allowed per UTC day across all users. */
+  WALKS_PER_DAY: z.coerce.number().int().min(0).default(100),
+
+  // Web Push (VAPID). Both keys unset = push notifications are off (everything else still works).
+  VAPID_PUBLIC_KEY: z.string().min(1).optional(),
+  VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+  /** Contact for push services: an https: URL or mailto: address. Defaults to APP_URL. */
+  VAPID_SUBJECT: z.string().min(1).optional(),
+
   CRON_SECRET: z.string().min(16).optional(),
 });
 

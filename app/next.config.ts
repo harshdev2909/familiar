@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const appUrl = new URL(process.env.APP_URL ?? "http://localhost:3000");
+/** Comma-separated extra hosts that serve /api/media (e.g. an old domain after moving to a custom one). */
+const extraMediaHosts = (process.env.MEDIA_HOSTS ?? "").split(",").map((h) => h.trim()).filter(Boolean);
 
 const securityHeaders = [
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
@@ -34,6 +36,9 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       { protocol: "https", hostname: "*.public.blob.vercel-storage.com" },
       { protocol: appUrl.protocol.replace(":", "") as "http" | "https", hostname: appUrl.hostname, port: appUrl.port, pathname: "/api/media/**" },
+      // Media keeps the origin it was stored under; trust previous/alternate origins too (Vercel aliases, custom domains).
+      { protocol: "https", hostname: "*.vercel.app", pathname: "/api/media/**" },
+      ...extraMediaHosts.map((hostname) => ({ protocol: "https" as const, hostname, pathname: "/api/media/**" })),
     ],
   },
 };

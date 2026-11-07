@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Footprints, Handshake, Loader2 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -11,6 +11,8 @@ import { AutoRickshaw, Cloud, MapPin } from "@/components/art/Handmade";
 import { Avatar } from "@/components/explore/Avatar";
 import { SpotSheet } from "@/components/explore/SpotSheet";
 import { SignInDialog } from "@/components/SignIn";
+import { ProposeSwapDialog } from "@/components/trades/ProposeSwap";
+import { WALK_ART, useStartWalk } from "@/components/walks/walks";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Pill, Skeleton } from "@/components/ui/card";
 import { cn } from "@/components/ui/cn";
@@ -28,6 +30,8 @@ export function ExploreScreen() {
   const [selected, setSelected] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [signIn, setSignIn] = useState(false);
+  const [swapWith, setSwapWith] = useState<ExploreFamiliar | null>(null);
+  const startWalk = useStartWalk();
   const scroller = useRef<HTMLDivElement>(null);
 
   // On phones the map is wider than the screen: start in the middle of town.
@@ -134,6 +138,24 @@ export function ExploreScreen() {
         </section>
       )}
 
+      {/* Night walk: three Familiars, one painting */}
+      {canAct && (
+        <section className="mx-auto mt-6 max-w-6xl px-5" aria-labelledby="walk-cta">
+          <div className="sticker flex flex-col items-start gap-4 p-4 sm:flex-row sm:items-center sm:p-5">
+            <span className="relative block aspect-[4/3] w-32 shrink-0 overflow-hidden rounded-2xl bg-paper">
+              <Image src={WALK_ART} alt="" fill sizes="128px" className="object-cover" />
+            </span>
+            <div className="flex-1">
+              <p id="walk-cta" className="text-lg font-semibold tracking-tight">Take a night walk</p>
+              <p className="text-sm text-muted-foreground">Gather two friends. You all get painted on one lantern-lit street, and everyone gets 20 Sparks.</p>
+            </div>
+            <Button onClick={() => startWalk.mutate()} loading={startWalk.isPending}>
+              <Footprints className="size-4" aria-hidden /> Start a walk
+            </Button>
+          </div>
+        </section>
+      )}
+
       {/* The same Familiars as a list — easier on small screens and keyboards */}
       <section className="mx-auto mt-10 max-w-6xl px-5" aria-labelledby="nearby">
         <h2 id="nearby" className="text-sm font-medium text-primary">Nearby</h2>
@@ -160,6 +182,10 @@ export function ExploreScreen() {
                     </span>
                     {f.mine ? (
                       <Pill tone="primary">you</Pill>
+                    ) : f.metInPerson ? (
+                      <Pill tone="butter">
+                        <Handshake className="size-3.5" aria-hidden /> met
+                      </Pill>
                     ) : f.spotted ? (
                       <Pill tone="mint">
                         <Check className="size-3.5" aria-hidden /> spotted
@@ -179,7 +205,21 @@ export function ExploreScreen() {
         )}
       </section>
 
-      {current && <SpotSheet key={current.label} familiar={current} open={open} onClose={() => setOpen(false)} canAct={canAct} onNeedAccount={needAccount} />}
+      {current && (
+        <SpotSheet
+          key={current.label}
+          familiar={current}
+          open={open}
+          onClose={() => setOpen(false)}
+          canAct={canAct}
+          onNeedAccount={needAccount}
+          onSwap={() => {
+            setOpen(false);
+            setSwapWith(current);
+          }}
+        />
+      )}
+      <ProposeSwapDialog key={swapWith?.label ?? "none"} to={swapWith} open={Boolean(swapWith)} onClose={() => setSwapWith(null)} />
       <SignInDialog open={signIn} onClose={() => setSignIn(false)} />
     </div>
   );
@@ -195,15 +235,22 @@ function Pin({ f, index, onOpen }: { f: ExploreFamiliar; index: number; onOpen: 
       onClick={onOpen}
       className="group absolute -translate-x-1/2 -translate-y-full rounded-full focus-visible:outline-offset-4"
       style={{ left: `${x * 100}%`, top: `${y * 100}%`, zIndex: Math.round(y * 100) }}
-      aria-label={`${f.label}, level ${f.level} ${speciesName(f.species).toLowerCase()}${f.mine ? ", that's you" : f.spotted ? ", spotted" : ", not spotted yet"}`}
+      aria-label={`${f.label}, level ${f.level} ${speciesName(f.species).toLowerCase()}${f.mine ? ", that's you" : f.metInPerson ? ", met in person" : f.spotted ? ", spotted" : ", not spotted yet"}`}
     >
       <span className="flex animate-bob flex-col items-center motion-reduce:animate-none" style={{ animationDelay: `${(index % 6) * 0.45}s` }}>
         <span className="relative transition-transform duration-200 ease-out-soft group-hover:-translate-y-1 group-hover:scale-105 group-active:scale-95">
           <Avatar species={f.species} portraitUrl={f.portraitUrl} size={f.mine ? 60 : 52} />
-          {f.spotted && !f.mine && (
-            <span className="absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-mint text-mint-ink shadow-sticker" aria-hidden>
-              <Check className="size-3" strokeWidth={3} />
+          {f.metInPerson && !f.mine ? (
+            <span className="absolute -right-1.5 -top-1.5 grid size-6 place-items-center rounded-full bg-butter text-butter-ink shadow-sticker" aria-hidden>
+              <Handshake className="size-3.5" strokeWidth={2.5} />
             </span>
+          ) : (
+            f.spotted &&
+            !f.mine && (
+              <span className="absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-mint text-mint-ink shadow-sticker" aria-hidden>
+                <Check className="size-3" strokeWidth={3} />
+              </span>
+            )
           )}
         </span>
         {/* tail */}

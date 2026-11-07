@@ -97,10 +97,11 @@ export class ZeroGRouter {
 
   /**
    * Seedream (sync). Returns JPEG/PNG bytes. `reference` (a data: URL or public URL of the previous
-   * portrait) keeps the creature visually consistent across days.
+   * portrait — or several, e.g. every Familiar on a night walk) keeps the creatures visually consistent.
    */
-  async image(prompt: string, reference?: string): Promise<{ bytes: Uint8Array; receipt: Receipt }> {
+  async image(prompt: string, reference?: string | string[]): Promise<{ bytes: Uint8Array; receipt: Receipt }> {
     const model = env().ZG_MODEL_IMAGE;
+    const refs = (Array.isArray(reference) ? reference : reference ? [reference] : []).filter(Boolean);
     const { body, receipt } = await this.callJson<{ data?: { b64_json?: string }[] }>("draw", model, "/images/generations", {
       json: {
         model,
@@ -108,7 +109,7 @@ export class ZeroGRouter {
         n: 1,
         size: env().ZG_IMAGE_SIZE,
         response_format: "b64_json",
-        ...(reference && { image: [reference] }),
+        ...(refs.length > 0 && { image: refs }),
         ...(env().ZG_VERIFY_TEE && { verify_tee: true }),
       },
       timeoutMs: 120_000,

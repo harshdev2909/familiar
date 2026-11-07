@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Gift } from "lucide-react";
+import { ArrowLeftRight, Check, Gift, Handshake } from "lucide-react";
 import { useState } from "react";
 import { Sparkle, StarCharm } from "@/components/art/Charm";
 import { EmberIcon } from "@/components/art/Icons";
@@ -39,12 +39,15 @@ export function SpotSheet({
   onClose,
   canAct,
   onNeedAccount,
+  onSwap,
 }: {
   familiar: ExploreFamiliar;
   open: boolean;
   onClose: () => void;
   canAct: boolean;
   onNeedAccount: () => void;
+  /** Open "Propose a swap" for this friend (shown once spotted). */
+  onSwap?: () => void;
 }) {
   const toast = useToast();
   const reduced = useReducedMotion();
@@ -121,6 +124,11 @@ export function SpotSheet({
           <Pill tone={tone}>Level {familiar.level}</Pill>
           {familiar.mood && <Pill tone="muted">feeling {familiar.mood}</Pill>}
           {familiar.mine && <Pill tone="primary">yours</Pill>}
+          {familiar.metInPerson && !familiar.mine && (
+            <Pill tone="butter">
+              <Handshake className="size-3.5" aria-hidden /> met in person
+            </Pill>
+          )}
         </div>
 
         <div className="h-8" aria-live="polite">
@@ -157,6 +165,11 @@ export function SpotSheet({
           <ButtonLink href={`/f/${familiar.label}`} size="lg" variant="outline" className={cn(familiar.mine && "sm:col-span-2")}>
             Visit page
           </ButtonLink>
+          {!familiar.mine && spotted && canAct && onSwap && (
+            <Button size="lg" variant="ghost" onClick={onSwap} className="sm:col-span-2">
+              <ArrowLeftRight className="size-4" aria-hidden /> Propose a swap
+            </Button>
+          )}
         </div>
       </div>
     </Dialog>

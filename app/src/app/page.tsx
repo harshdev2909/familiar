@@ -59,8 +59,8 @@ export default function Home() {
 
       <DiwaliBanner />
 
-      {/* The festival has its own banner above. */}
-      <Spotlight exclude={["diwali-2026"]} />
+      {/* The festival (and Lantern Night) have their own banner above. */}
+      <Spotlight exclude={["diwali-2026", "lantern-night"]} />
 
       <StoryTrail />
 
